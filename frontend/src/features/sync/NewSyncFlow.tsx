@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
+import { AnimatePresence, motion } from "motion/react"
 import { ArrowRight, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -17,6 +18,7 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
 import { defaultSchema } from "@/components/layout/ConnectionTree"
+import { Collapse, springSoft, stepTransition, stepVariants } from "@/components/ui/motion"
 import { CronField } from "@/features/sync/CronField"
 import { CompareResultView } from "@/features/sync/CompareViews"
 import { TaskRunView } from "@/features/sync/TaskViews"
@@ -87,6 +89,12 @@ export function NewSyncFlow({
   onSaved?: () => void
 }) {
   const [step, setStep] = useState<Step>(0)
+  // 步骤方向：前进左滑入、后退右滑入
+  const stepDir = useRef<1 | -1>(1)
+  const go = (next: Step) => {
+    stepDir.current = next >= step ? 1 : -1
+    setStep(next)
+  }
   const [d, setD] = useState<Draft>(() => ({
     ...initialDraft,
     ...(initial?.config
@@ -190,7 +198,7 @@ export function NewSyncFlow({
         maxDiffKeys: 2000,
       })
       setCompareTaskId(res.id)
-      setStep(2)
+      go(2)
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -205,7 +213,7 @@ export function NewSyncFlow({
       const res = await api.buildSyncPlan(buildRequest(currentSelections()))
       setPlan(res)
       setSkipped(new Set(res.tables.flatMap((t) => t.structureActions.filter((a) => a.isDestructive).map((a) => a.id))))
-      setStep(2)
+      go(2)
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -233,7 +241,7 @@ export function NewSyncFlow({
     try {
       const res = await api.submitSyncTask({ plan, skipActionIds: [...skipped], confirmDestructive })
       setTaskId(res.id)
-      setStep(3)
+      go(3)
       if (saveProfile && profileName.trim()) {
         try {
           const body = {
@@ -258,7 +266,7 @@ export function NewSyncFlow({
   }
 
   function reset() {
-    setStep(0)
+    go(0)
     setPlan(null)
     setTaskId(null)
     setCompareTaskId(null)
@@ -280,11 +288,25 @@ export function NewSyncFlow({
           {STEP_TITLES.map((t, i) => (
             <div key={t} className="flex items-center gap-1">
               <span
-                className={`rounded-full px-2 py-0.5 ${
-                  i === step ? "bg-primary text-primary-foreground" : i < step ? "bg-accent text-accent-foreground" : "text-muted-foreground"
+                className={`relative rounded-full px-2 py-0.5 transition-colors duration-200 ${
+                  i === step
+                    ? "text-primary-foreground"
+                    : i < step
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground"
                 }`}
               >
-                {i + 1}. {t}
+                {/* layoutId 胶囊：active 背景在步骤间平滑滑动 */}
+                {i === step && (
+                  <motion.span
+                    layoutId="sync-step-pill"
+                    className="absolute inset-0 rounded-full bg-primary"
+                    transition={springSoft}
+                  />
+                )}
+                <span className="relative z-10">
+                  {i + 1}. {t}
+                </span>
               </span>
               {i < STEP_TITLES.length - 1 && <ArrowRight className="size-3 text-muted-foreground" />}
             </div>
@@ -292,7 +314,18 @@ export function NewSyncFlow({
         </div>
 
         <ScrollArea className="max-h-[62vh] pr-2">
-          <div className="space-y-4">
+          {/* mode="wait"：旧步骤先滑出，新步骤再滑入，方向由 go() 决定 */}
+          <AnimatePresence mode="wait" custom={stepDir.current} initial={false}>
+            <motion.div
+              key={step}
+              custom={stepDir.current}
+              variants={stepVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={stepTransition}
+              className="space-y-4"
+            >
             {/* Step 0：源与目标 */}
             {step === 0 && (
               <>
@@ -334,7 +367,7 @@ export function NewSyncFlow({
                 <div className="flex justify-end">
                   <Button
                     disabled={!d.srcConn || !d.srcDb || !d.tgtConn || !d.tgtDb || sameDb}
-                    onClick={() => setStep(1)}
+                    onClick={() => go(1)}
                   >
                     下一步
                   </Button>
@@ -357,7 +390,7 @@ export function NewSyncFlow({
                   </RadioGroup>
 
                   {d.mode === "StructureAndData" && (
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <div className="mt-3 flex animate-in flex-wrap items-center gap-3 fade-in slide-in-from-top-1 duration-200">
                       <Label className="text-xs">数据方式</Label>
                       <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
                         <SelectTrigger className="w-44" size="sm"><SelectValue /></SelectTrigger>
@@ -420,7 +453,7 @@ export function NewSyncFlow({
                 />
 
                 <div className="flex items-center justify-between">
-                  <Button variant="outline" onClick={() => setStep(0)}>上一步</Button>
+                  <Button variant="outline" onClick={() => go(0)}>上一步</Button>
                   <div className="flex items-center gap-2">
                     <OptSwitch label="先对比再同步" checked={d.compareFirst} onChange={(v) => patch({ compareFirst: v })} />
                     {d.compareFirst ? (
@@ -444,7 +477,7 @@ export function NewSyncFlow({
                   <>
                     <CompareResultView taskId={compareTaskId} onOpenTable={() => {}} />
                     <div className="flex items-center justify-between">
-                      <Button variant="outline" onClick={() => setStep(1)}>上一步</Button>
+                      <Button variant="outline" onClick={() => go(1)}>上一步</Button>
                       <Button onClick={generatePlanFromCompare} disabled={busy}>
                         {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} 由对比结果生成同步计划
                       </Button>
@@ -468,7 +501,7 @@ export function NewSyncFlow({
                     } />
                     <div className="rounded-lg border p-3">
                       <OptSwitch label="保存为同步配置（Profile）" checked={saveProfile} onChange={setSaveProfile} />
-                      {saveProfile && (
+                      <Collapse open={saveProfile}>
                         <div className="mt-2 space-y-3">
                           <Input
                             placeholder="Profile 名称"
@@ -477,10 +510,10 @@ export function NewSyncFlow({
                           />
                           <CronField cron={cron} enabled={cronEnabled} onChange={(c, e) => { setCron(c); setCronEnabled(e) }} />
                         </div>
-                      )}
+                      </Collapse>
                     </div>
                     <div className="flex items-center justify-between">
-                      <Button variant="outline" onClick={() => setStep(1)}>上一步</Button>
+                      <Button variant="outline" onClick={() => go(1)}>上一步</Button>
                       <div className="flex items-center gap-3">
                         <OptSwitch label="确认执行破坏性动作（DROP 等）" checked={confirmDestructive} onChange={setConfirmDestructive} />
                         <Button onClick={submit} disabled={busy}>
@@ -496,7 +529,8 @@ export function NewSyncFlow({
             {/* Step 3：执行 */}
             {step === 3 && taskId && <TaskRunView taskId={taskId} />}
             {step === 2 && d.compareFirst && compareTaskId && !plan && null}
-          </div>
+            </motion.div>
+          </AnimatePresence>
         </ScrollArea>
       </DialogContent>
     </Dialog>
@@ -552,16 +586,18 @@ function ConnDbPicker({
 
 function ModeOption({ value, checked, title, desc }: { value: string; checked: boolean; title: string; desc: string }) {
   return (
-    <Label
-      htmlFor={`mode-${value}`}
-      className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 font-normal ${checked ? "border-primary" : ""}`}
-    >
+                  <label
+                    htmlFor={`mode-${value}`}
+                    className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 font-normal transition-colors duration-200 ${
+                      checked ? "border-primary" : ""
+                    }`}
+                  >
       <RadioGroupItem value={value} id={`mode-${value}`} />
       <span>
         <span className="block text-sm">{title}</span>
         <span className="text-xs text-muted-foreground">{desc}</span>
       </span>
-    </Label>
+    </label>
   )
 }
 
@@ -703,9 +739,9 @@ export function PlanReview({
                       </button>
                     </span>
                   </label>
-                  {expanded === a.id && (
+                  <Collapse open={expanded === a.id}>
                     <pre className="mx-6 my-1 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-5">{a.sql}</pre>
-                  )}
+                  </Collapse>
                 </div>
               )
             })}

@@ -111,7 +111,7 @@ export function QueryHistoryPanel({
                     {list.map((e) => (
                       <div
                         key={e.id}
-                        className="group flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-accent/40"
+                        className="group flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 transition-colors duration-150 hover:bg-accent/40"
                         onClick={() => onPick(e.sql, false)}
                         onDoubleClick={() => onPick(e.sql, true)}
                         title="单击回填 · 双击执行"
@@ -134,7 +134,7 @@ export function QueryHistoryPanel({
                         <button
                           aria-label="收藏"
                           className={cn(
-                            "shrink-0 rounded p-1 opacity-0 transition-opacity group-hover:opacity-100",
+                            "shrink-0 rounded p-1 opacity-0 transition-[opacity,scale] duration-150 group-hover:opacity-100 active:scale-125",
                             e.favorite && "opacity-100",
                           )}
                           onClick={(ev) => {
@@ -171,7 +171,7 @@ export function QueryHistoryPanel({
                 saved.map((q) => (
                   <div
                     key={q.id}
-                    className="group flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 hover:bg-accent/40"
+                    className="group flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-1.5 transition-colors duration-150 hover:bg-accent/40"
                     onClick={() => onPick(q.sql, false)}
                     onDoubleClick={() => onPick(q.sql, true)}
                     title="单击回填 · 双击执行"

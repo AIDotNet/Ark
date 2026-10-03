@@ -300,7 +300,7 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
           <div
             className={cn(
               "flex shrink-0 items-center overflow-hidden border-r px-0 text-xs",
-              isEdited && "bg-amber-100/70 dark:bg-amber-900/30"
+              isEdited && "animate-flash bg-amber-100/70 dark:bg-amber-900/30"
             )}
             style={{ width: colWidth(c.name), height: ROW_HEIGHT }}
             onDoubleClick={() => startEdit(r.key, c.name)}
@@ -383,7 +383,7 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
           添加筛选
         </Button>
         {filters.map((f, i) => (
-          <Badge key={i} variant="secondary" className="gap-1">
+          <Badge key={i} variant="secondary" className="animate-pop-in gap-1">
             {f.column} {OPS.find((o) => o.v === f.op)?.label}
             {f.op !== "is_null" && f.op !== "is_not_null" ? ` ${String(f.value)}` : ""}
             <button
@@ -403,7 +403,7 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
           )}
           {dirtyCount > 0 && (
             <>
-              <Badge>{dirtyCount} 处变更</Badge>
+              <Badge className="animate-pop-in">{dirtyCount} 处变更</Badge>
               <Button size="sm" variant="outline" onClick={() => { setEdits({}); setNewRows([]); setDeletedKeys(new Set()) }}>
                 <Undo2 /> 放弃
               </Button>
@@ -489,7 +489,11 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
 
             {/* 新增行（少量，不参与虚拟化） */}
             {newRows.map((r, i) => (
-              <div key={`new-${i}`} className="flex items-stretch border-b bg-amber-50/60 dark:bg-amber-950/20" style={{ height: ROW_HEIGHT }}>
+              <div
+                key={`new-${i}`}
+                className="flex animate-in items-stretch border-b border-solid bg-amber-50/60 slide-in-from-top-1 fade-in duration-200 dark:bg-amber-950/20"
+                style={{ height: ROW_HEIGHT }}
+              >
                 <div className="flex w-11 shrink-0 items-center justify-center border-r">
                   <Button
                     variant="ghost"
@@ -529,8 +533,8 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
                     key={r.key}
                     data-deleted={deleted || undefined}
                     className={cn(
-                      "absolute left-0 top-0 flex items-stretch border-b text-xs",
-                      deleted && "line-through opacity-40",
+                      "absolute left-0 top-0 flex items-stretch border-b text-xs transition-[background-color,opacity] duration-150 hover:bg-accent/25",
+                      deleted && "line-through opacity-40 hover:bg-transparent",
                       checked.has(r.key) && !deleted && "bg-accent/40"
                     )}
                     style={{ height: vi.size, transform: `translateY(${vi.start}px)`, width: totalWidth }}
@@ -575,7 +579,7 @@ export function DataGrid({ connectionId, database, schema, table: tableName }: O
             </div>
 
             {visibleRows.length === 0 && newRows.length === 0 && (
-              <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">无数据</div>
+              <div className="flex h-32 animate-in items-center justify-center text-sm text-muted-foreground fade-in duration-300">无数据</div>
             )}
           </div>
         )}

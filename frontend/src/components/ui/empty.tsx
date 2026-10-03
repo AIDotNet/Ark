@@ -40,6 +40,8 @@ function EmptyMedia({
         variant === "icon" &&
           "bg-muted text-foreground/70 flex size-10 rounded-lg [&_svg:not([class*='size-'])]:size-5",
         variant === "default" && "[&_svg:not([class*='size-'])]:size-4",
+        // 入场缩放淡入；图标轻微漂浮（motion-safe：用户偏好减少动效时自动关闭）
+        "animate-zoom-in motion-safe:[&_svg]:animate-float",
         className
       )}
       {...props}

@@ -66,7 +66,7 @@ export function CronField({
         </Select>
         {custom && (
           <Input
-            className="h-8 w-44 font-mono text-xs"
+            className="h-8 w-44 animate-in fade-in slide-in-from-top-1 font-mono text-xs duration-200"
             placeholder="0 9 * * *"
             value={cron ?? ""}
             onChange={(e) => onChange(e.target.value, enabled)}

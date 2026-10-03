@@ -214,7 +214,7 @@ export function ResultsGrid({ rs, tableName }: { rs: QueryResultSet; tableName?:
               return (
                 <div
                   key={vi.key}
-                  className="absolute left-0 top-0 flex items-stretch border-b text-xs hover:bg-accent/30"
+                  className="absolute left-0 top-0 flex items-stretch border-b text-xs transition-colors duration-100 hover:bg-accent/30"
                   style={{ height: vi.size, transform: `translateY(${vi.start}px)`, width: totalWidth }}
                 >
                   <div
@@ -306,7 +306,7 @@ export function ResultsGrid({ rs, tableName }: { rs: QueryResultSet; tableName?:
           </div>
 
           {sortedRows.length === 0 && (
-            <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-24 animate-in items-center justify-center text-sm text-muted-foreground fade-in duration-300">
               {filter ? "无匹配行" : "空结果集"}
             </div>
           )}

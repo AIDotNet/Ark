@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "@/lib/api"
+import { Stagger, StaggerItem } from "@/components/ui/motion"
 import type { DiffRowsResponse, SyncTaskDto, TableCompareResult } from "@/types/api"
 
 /** 差异统计胶囊：+插入 ~更新 -删除 */
@@ -68,45 +69,47 @@ export function CompareResultView({
   const cleanTables = diffTables.filter((t) => t.inserted + t.updated + t.deleted === 0)
 
   return (
-    <div className="space-y-2">
+    <Stagger className="space-y-2">
       {compare.tables.map((t) => (
-        <div key={t.table} className="rounded-lg border p-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Table2 className="size-4 text-muted-foreground" />
-            {t.table}
-            {t.error ? (
-              <Badge variant="destructive">{t.error}</Badge>
-            ) : (
-              <StatPill r={t} />
+        <StaggerItem key={t.table}>
+          <div className="rounded-lg border p-3 transition-colors duration-200 hover:bg-accent/20">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Table2 className="size-4 text-muted-foreground" />
+              {t.table}
+              {t.error ? (
+                <Badge variant="destructive">{t.error}</Badge>
+              ) : (
+                <StatPill r={t} />
+              )}
+              {!t.error && (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  className="ml-auto"
+                  disabled={t.inserted + t.updated + t.deleted === 0}
+                  onClick={() => onOpenTable(t.table)}
+                >
+                  查看差异行
+                </Button>
+              )}
+            </div>
+            {t.verification && !t.verification.countsMatch && (
+              <div className="mt-1 text-xs text-destructive">
+                行数不一致：源 {t.verification.sourceRows} ≠ 目标 {t.verification.targetRows}
+              </div>
             )}
-            {!t.error && (
-              <Button
-                size="xs"
-                variant="outline"
-                className="ml-auto"
-                disabled={t.inserted + t.updated + t.deleted === 0}
-                onClick={() => onOpenTable(t.table)}
-              >
-                查看差异行
-              </Button>
+            {t.samplesTruncated && (
+              <div className="mt-1 text-[11px] text-muted-foreground">差异键过多，仅保留前若干条（应用阶段仍会全量处理）</div>
             )}
           </div>
-          {t.verification && !t.verification.countsMatch && (
-            <div className="mt-1 text-xs text-destructive">
-              行数不一致：源 {t.verification.sourceRows} ≠ 目标 {t.verification.targetRows}
-            </div>
-          )}
-          {t.samplesTruncated && (
-            <div className="mt-1 text-[11px] text-muted-foreground">差异键过多，仅保留前若干条（应用阶段仍会全量处理）</div>
-          )}
-        </div>
+        </StaggerItem>
       ))}
       {cleanTables.length === diffTables.length && diffTables.length > 0 && (
-        <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm">
+        <div className="animate-in rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm fade-in duration-300">
           所选表数据完全一致。
         </div>
       )}
-    </div>
+    </Stagger>
   )
 }
 

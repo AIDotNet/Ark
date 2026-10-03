@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { api } from "@/lib/api"
+import { Stagger, StaggerItem } from "@/components/ui/motion"
 import { CompareResultView, DiffViewer } from "@/features/sync/CompareViews"
 import type { SyncTaskDto, SyncTaskStatus, TableSyncReport } from "@/types/api"
 
@@ -91,11 +92,13 @@ export function TaskRunView({ taskId }: { taskId: string }) {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="animate-in space-y-3 fade-in slide-in-from-bottom-1 duration-300">
       <div className="rounded-lg border p-4">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium">
           执行进度
-          <Badge variant={statusVariant(task.status)}>{task.status}</Badge>
+          <Badge variant={statusVariant(task.status)} className={running ? "animate-pulse-dot" : undefined}>
+            {task.status}
+          </Badge>
           {task.kind === "Compare" && <Badge variant="outline" className="text-[10px]">对比</Badge>}
           {task.currentTable && <span className="text-xs text-muted-foreground">当前: {task.currentTable}</span>}
           <span className="ml-auto text-xs">
@@ -236,23 +239,30 @@ export function TaskHistory({ onView }: { onView: (id: string) => void }) {
           {tasks.data && tasks.data.length === 0 && (
             <div className="py-8 text-center text-xs text-muted-foreground">还没有同步任务</div>
           )}
-          <div className="space-y-1">
+          <Stagger className="space-y-1">
             {tasks.data?.map((t) => (
-              <div key={t.id} className="flex items-center gap-3 rounded border px-3 py-2 text-xs">
-                <Badge variant={statusVariant(t.status)}>{t.status}</Badge>
-                {t.kind === "Compare" && <Badge variant="outline" className="text-[10px]">对比</Badge>}
-                <span className="text-muted-foreground">{new Date(t.startedAt).toLocaleString()}</span>
-                {t.currentTable && <span className="min-w-0 truncate">当前: {t.currentTable}</span>}
-                <span className="ml-auto flex items-center gap-2">
-                  <Progress value={t.percent} className="h-1.5 w-24" />
-                  <span>{t.percent}%</span>
-                </span>
-                <Button variant="outline" size="xs" onClick={() => onView(t.id)}>
-                  <Clock /> 查看
-                </Button>
-              </div>
+              <StaggerItem key={t.id}>
+                <div className="flex items-center gap-3 rounded border px-3 py-2 text-xs">
+                  <Badge
+                    variant={statusVariant(t.status)}
+                    className={t.status === "Running" || t.status === "Queued" ? "animate-pulse-dot" : undefined}
+                  >
+                    {t.status}
+                  </Badge>
+                  {t.kind === "Compare" && <Badge variant="outline" className="text-[10px]">对比</Badge>}
+                  <span className="text-muted-foreground">{new Date(t.startedAt).toLocaleString()}</span>
+                  {t.currentTable && <span className="min-w-0 truncate">当前: {t.currentTable}</span>}
+                  <span className="ml-auto flex items-center gap-2">
+                    <Progress value={t.percent} className="h-1.5 w-24" />
+                    <span>{t.percent}%</span>
+                  </span>
+                  <Button variant="outline" size="xs" onClick={() => onView(t.id)}>
+                    <Clock /> 查看
+                  </Button>
+                </div>
+              </StaggerItem>
             ))}
-          </div>
+          </Stagger>
         </div>
       </div>
     </ScrollArea>

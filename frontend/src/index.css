@@ -5,6 +5,10 @@
 
 :root {
   --radius: 0.625rem;
+  /* ---- Motion 设计令牌：统一节奏，避免各处随意设置时长 ---- */
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --motion-slow: 320ms;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -77,6 +81,19 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
+  /* ---- Motion tokens：生成 animate-* / ease-* 工具类 ---- */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --animate-fade-in: fade-in 0.2s ease-out both;
+  --animate-fade-in-up: fade-in-up 0.28s var(--ease-out-quart) both;
+  --animate-zoom-in: zoom-in 0.2s var(--ease-out-quart) both;
+  --animate-slide-down: slide-down 0.24s var(--ease-out-quart) both;
+  --animate-pop-in: pop-in 0.26s var(--ease-spring) both;
+  --animate-shimmer: shimmer 1.6s ease-in-out infinite;
+  --animate-indeterminate: indeterminate 1.3s ease-in-out infinite;
+  --animate-pulse-dot: pulse-dot 1.6s ease-in-out infinite;
+  --animate-flash: flash 0.9s ease-out both;
+  --animate-float: float 3.2s ease-in-out infinite;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -116,5 +133,96 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* ---------------- Motion keyframes（顶层声明，供 --animate-* 令牌与自定义类引用） ---------------- */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes zoom-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+/* 不确定进度条：子元素宽 1/3，从容器左侧滑入滑出 */
+@keyframes indeterminate {
+  0% { transform: translateX(-110%); }
+  60% { transform: translateX(220%); }
+  100% { transform: translateX(330%); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.82); }
+}
+/* 单元格编辑闪动：inset 阴影叠加，不与背景色类冲突 */
+@keyframes flash {
+  0% { box-shadow: inset 0 0 0 999px color-mix(in oklch, var(--color-amber-500) 32%, transparent); }
+  100% { box-shadow: inset 0 0 0 999px transparent; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+/* ---------------- 自定义动效工具类 ---------------- */
+
+/* 骨架屏扫光：覆盖一层高光渐变来回扫过 */
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.skeleton-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklch, var(--color-foreground) 8%, transparent),
+    transparent
+  );
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* 纯 CSS 子元素级联入场（适合静态小列表；动态大列表请用 <Stagger>） */
+.stagger-fade > * {
+  animation: fade-in-up 0.3s var(--ease-out-quart) both;
+}
+.stagger-fade > *:nth-child(2) { animation-delay: 40ms; }
+.stagger-fade > *:nth-child(3) { animation-delay: 80ms; }
+.stagger-fade > *:nth-child(4) { animation-delay: 120ms; }
+.stagger-fade > *:nth-child(5) { animation-delay: 160ms; }
+.stagger-fade > *:nth-child(6) { animation-delay: 200ms; }
+.stagger-fade > *:nth-child(7) { animation-delay: 240ms; }
+.stagger-fade > *:nth-child(8) { animation-delay: 280ms; }
+
+/* 无障碍：用户偏好减少动效时，全局压平所有动画与过渡 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

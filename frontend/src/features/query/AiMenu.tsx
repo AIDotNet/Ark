@@ -146,7 +146,7 @@ export function AiMenu({
                     onChange={(e) => setPrompt(e.target.value)}
                   />
                   {generated !== null && (
-                    <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 font-mono text-xs">
+                    <pre className="mt-2 max-h-40 animate-in overflow-auto whitespace-pre-wrap rounded-md bg-muted/50 p-2 font-mono text-xs fade-in slide-in-from-top-1 duration-300">
                       {generated || "（空回复）"}
                     </pre>
                   )}

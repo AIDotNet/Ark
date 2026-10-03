@@ -224,7 +224,7 @@ export function TableDesigner({
           {!isNew && <TabsTrigger value="ddl">DDL</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="columns" className="min-h-0 flex-1 overflow-auto px-3 pb-3 data-[state=inactive]:hidden">
+        <TabsContent value="columns" className="min-h-0 flex-1 animate-in overflow-auto px-3 pb-3 fade-in slide-in-from-bottom-1 data-[state=inactive]:hidden duration-200">
           <Table>
             <TableHeader>
               <TableRow>
@@ -311,7 +311,7 @@ export function TableDesigner({
         </TabsContent>
 
         {!isNew && (
-          <TabsContent value="indexes" className="min-h-0 flex-1 overflow-auto px-3 data-[state=inactive]:hidden">
+          <TabsContent value="indexes" className="min-h-0 flex-1 animate-in overflow-auto px-3 fade-in slide-in-from-bottom-1 data-[state=inactive]:hidden duration-200">
             <div className="grid grid-cols-2 gap-4 pt-2">
               <div>
                 <Label className="text-xs text-muted-foreground">索引</Label>
@@ -342,7 +342,7 @@ export function TableDesigner({
         )}
 
         {!isNew && (
-          <TabsContent value="ddl" className="min-h-0 flex-1 overflow-auto px-3 data-[state=inactive]:hidden">
+          <TabsContent value="ddl" className="min-h-0 flex-1 animate-in overflow-auto px-3 fade-in slide-in-from-bottom-1 data-[state=inactive]:hidden duration-200">
             <pre className="mt-2 rounded-md bg-muted p-3 text-xs leading-5">
               {detail.data?.createSql ?? "（该方言无原始 DDL，可查看预览生成）"}
             </pre>

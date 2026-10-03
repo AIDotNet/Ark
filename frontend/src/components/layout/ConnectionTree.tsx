@@ -1,8 +1,7 @@
 import { useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ChevronDown,
-  ChevronRight,
   Database,
   FolderOpen,
   Layers,
@@ -38,6 +37,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Collapse, Stagger, StaggerItem } from "@/components/ui/motion"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
 import type { ConnectionDto, Dialect } from "@/types/api"
@@ -65,6 +65,7 @@ export function ConnectionTree() {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections })
+  const connectionsFetching = useIsFetching({ queryKey: ["connections"] }) > 0
 
   const toggleConn = (id: string) =>
     setOpenConns((s) => {
@@ -157,7 +158,7 @@ export function ConnectionTree() {
                 className="size-6"
                 onClick={() => queryClient.invalidateQueries({ queryKey: ["connections"] })}
               >
-                <RefreshCw className="size-3.5" />
+                <RefreshCw className={`size-3.5 ${connectionsFetching ? "animate-spin" : ""}`} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>刷新</TooltipContent>
@@ -190,69 +191,74 @@ export function ConnectionTree() {
               ))}
             </div>
           )}
-          {connections.data?.map((conn) => (
-            <div key={conn.id}>
-              <ContextMenu>
-                <ContextMenuTrigger asChild>
-                  <button
-                    className="flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-accent/60"
-                    onClick={() => toggleConn(conn.id)}
-                  >
-                    {openConns.has(conn.id) ? (
-                      <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                    <PlugZap className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-                    <span className="truncate">{conn.name}</span>
-                    <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">
-                      {conn.dialect}
-                    </Badge>
-                    {conn.readOnly && (
-                      <Badge variant="secondary" className="shrink-0 text-[10px]">
-                        只读
-                      </Badge>
-                    )}
-                  </button>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  <ContextMenuItem
-                    onClick={() => {
-                      setEditing(conn)
-                      setDialogOpen(true)
-                    }}
-                  >
-                    <Pencil /> 编辑连接
-                  </ContextMenuItem>
-                  <ContextMenuItem onClick={() => openDesigner(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}>
-                    <Plus /> 新建表
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    onClick={() => openQuery(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}
-                  >
-                    <TerminalSquare /> 新建查询
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem className="text-destructive" onClick={() => requestDeleteConnection(conn)}>
-                    <Trash2 /> 删除连接
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
+          {connections.data && (
+            <Stagger className="space-y-0.5">
+              {connections.data.map((conn) => (
+                <StaggerItem key={conn.id}>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
+                        onClick={() => toggleConn(conn.id)}
+                      >
+                        {/* 单 chevron 旋转替代图标切换，展开/收起方向连续 */}
+                        <ChevronDown
+                          className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                            openConns.has(conn.id) ? "rotate-180" : "-rotate-90"
+                          }`}
+                        />
+                        <PlugZap className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                        <span className="truncate">{conn.name}</span>
+                        <Badge variant="outline" className="ml-auto shrink-0 text-[10px]">
+                          {conn.dialect}
+                        </Badge>
+                        {conn.readOnly && (
+                          <Badge variant="secondary" className="shrink-0 text-[10px]">
+                            只读
+                          </Badge>
+                        )}
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem
+                        onClick={() => {
+                          setEditing(conn)
+                          setDialogOpen(true)
+                        }}
+                      >
+                        <Pencil /> 编辑连接
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => openDesigner(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}>
+                        <Plus /> 新建表
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => openQuery(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}
+                      >
+                        <TerminalSquare /> 新建查询
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem className="text-destructive" onClick={() => requestDeleteConnection(conn)}>
+                        <Trash2 /> 删除连接
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
 
-              {openConns.has(conn.id) && (
-                <ConnDatabases
-                  conn={conn}
-                  openDbs={openDbs}
-                  toggleDb={toggleDb}
-                  openTable={openTable}
-                  openDesigner={openDesigner}
-                  openQuery={openQuery}
-                  setIoTable={setIoTable}
-                  dropTable={requestDropTable}
-                />
-              )}
-            </div>
-          ))}
+                  <Collapse open={openConns.has(conn.id)}>
+                    <ConnDatabases
+                      conn={conn}
+                      openDbs={openDbs}
+                      toggleDb={toggleDb}
+                      openTable={openTable}
+                      openDesigner={openDesigner}
+                      openQuery={openQuery}
+                      setIoTable={setIoTable}
+                      dropTable={requestDropTable}
+                    />
+                  </Collapse>
+                </StaggerItem>
+              ))}
+            </Stagger>
+          )}
           {connections.data?.length === 0 && (
             <Empty className="border-none p-4">
               <EmptyHeader>
@@ -350,7 +356,7 @@ function ConnDatabases({
   if (dbs.isError) return <div className="py-1 pl-7 text-xs text-destructive">加载失败: {dbs.error.message}</div>
 
   return (
-    <div className="ml-[15px] border-l pl-2 border-border/60">
+    <div className="ml-[15px] border-l border-border/60 pl-2">
       {dbs.data?.map((db) => {
         const key = `${conn.id}/${db.name}`
         const open = openDbs.has(key)
@@ -359,14 +365,14 @@ function ConnDatabases({
             <ContextMenu>
               <ContextMenuTrigger asChild>
                 <button
-                  className="flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-accent/60"
+                  className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
                   onClick={() => toggleDb(key)}
                 >
-                  {open ? (
-                    <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
+                  <ChevronDown
+                    className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                      open ? "rotate-180" : "-rotate-90"
+                    }`}
+                  />
                   <Database className="size-3.5 shrink-0 text-sky-600 dark:text-sky-400" />
                   <span className="truncate">{db.name}</span>
                 </button>
@@ -379,27 +385,28 @@ function ConnDatabases({
                 </ContextMenuItem>
               </ContextMenuContent>
             </ContextMenu>
-            {open && conn.dialect === "PostgreSQL" && (
-              <ConnSchemas
-                conn={conn}
-                database={db.name}
-                openTable={openTable}
-                openDesigner={openDesigner}
-                setIoTable={setIoTable}
-                dropTable={dropTable}
-              />
-            )}
-            {open && conn.dialect !== "PostgreSQL" && (
-              <ConnTables
-                conn={conn}
-                database={db.name}
-                schema={defaultSchema(conn.dialect, db.name)}
-                openTable={openTable}
-                openDesigner={openDesigner}
-                setIoTable={setIoTable}
-                dropTable={dropTable}
-              />
-            )}
+            <Collapse open={open}>
+              {conn.dialect === "PostgreSQL" ? (
+                <ConnSchemas
+                  conn={conn}
+                  database={db.name}
+                  openTable={openTable}
+                  openDesigner={openDesigner}
+                  setIoTable={setIoTable}
+                  dropTable={dropTable}
+                />
+              ) : (
+                <ConnTables
+                  conn={conn}
+                  database={db.name}
+                  schema={defaultSchema(conn.dialect, db.name)}
+                  openTable={openTable}
+                  openDesigner={openDesigner}
+                  setIoTable={setIoTable}
+                  dropTable={dropTable}
+                />
+              )}
+            </Collapse>
           </div>
         )
       })}
@@ -449,25 +456,25 @@ function ConnSchemas({
     return <div className="py-1 pl-7 text-xs text-destructive">加载失败: {schemas.error.message}</div>
 
   return (
-    <div className="ml-[15px] border-l pl-2 border-border/60">
+    <div className="ml-[15px] border-l border-border/60 pl-2">
       {schemas.data?.map((sc) => {
         const key = `${conn.id}/${database}/${sc.name}`
         const open = openSchemas.has(key)
         return (
           <div key={sc.name}>
             <button
-              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-accent/60"
+              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
               onClick={() => toggleSchema(key)}
             >
-              {open ? (
-                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-              )}
+              <ChevronDown
+                className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                  open ? "rotate-180" : "-rotate-90"
+                }`}
+              />
               <Layers className="size-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
               <span className="truncate">{sc.name}</span>
             </button>
-            {open && (
+            <Collapse open={open}>
               <ConnTables
                 conn={conn}
                 database={database}
@@ -477,7 +484,7 @@ function ConnSchemas({
                 setIoTable={setIoTable}
                 dropTable={dropTable}
               />
-            )}
+            </Collapse>
           </div>
         )
       })}
@@ -520,12 +527,12 @@ function ConnTables({
     return <div className="py-1 pl-7 text-xs text-destructive">加载失败: {tables.error.message}</div>
 
   return (
-    <div className="ml-[15px] border-l pl-2 border-border/60">
+    <div className="ml-[15px] border-l border-border/60 pl-2">
       {tables.data?.map((t) => (
         <ContextMenu key={t.name}>
           <ContextMenuTrigger asChild>
             <button
-              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left hover:bg-accent/60"
+              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
               onClick={() => !t.name.startsWith("view:") && openTable(conn, database, schema, t.name)}
             >
               <Table2 className={`size-3.5 shrink-0 ${t.kind === "view" ? "text-violet-500 dark:text-violet-400" : "text-amber-600 dark:text-amber-400"}`} />

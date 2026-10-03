@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { api } from "@/lib/api"
+import { Stagger, StaggerItem } from "@/components/ui/motion"
 import { CronField } from "@/features/sync/CronField"
 import { NewSyncFlow } from "@/features/sync/NewSyncFlow"
 import { TaskDetailPage, TaskHistory } from "@/features/sync/TaskViews"
@@ -89,41 +90,42 @@ export function SyncCenter() {
                     </div>
                   )}
                   {profiles.data && profiles.data.length === 0 && (
-                    <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
+                    <div className="animate-in rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground fade-in slide-in-from-bottom-1 duration-300">
                       还没有同步配置。点击「新建同步」创建一次同步，可顺手保存为配置（支持定时调度）。
                     </div>
                   )}
-                  <div className="grid gap-3 md:grid-cols-2">
+                  <Stagger className="grid gap-3 md:grid-cols-2">
                     {profiles.data?.map((p) => (
-                      <ProfileCard
-                        key={p.id}
-                        profile={p}
-                        onRun={() => runProfile.mutate(p.id)}
-                        running={runProfile.isPending && runProfile.variables === p.id}
-                        onEdit={() => {
-                          setEditing(p)
-                          setFlowOpen(true)
-                        }}
-                        onDuplicate={async () => {
-                          try {
-                            await api.createSyncProfile({
-                              name: `${p.name} 副本`,
-                              config: p.config,
-                              cron: p.cron,
-                              scheduleEnabled: false,
-                            })
-                            void qc.invalidateQueries({ queryKey: ["syncProfiles"] })
-                          } catch (e) {
-                            toast.error((e as Error).message)
+                      <StaggerItem key={p.id}>
+                        <ProfileCard
+                          profile={p}
+                          onRun={() => runProfile.mutate(p.id)}
+                          running={runProfile.isPending && runProfile.variables === p.id}
+                          onEdit={() => {
+                            setEditing(p)
+                            setFlowOpen(true)
+                          }}
+                          onDuplicate={async () => {
+                            try {
+                              await api.createSyncProfile({
+                                name: `${p.name} 副本`,
+                                config: p.config,
+                                cron: p.cron,
+                                scheduleEnabled: false,
+                              })
+                              void qc.invalidateQueries({ queryKey: ["syncProfiles"] })
+                            } catch (e) {
+                              toast.error((e as Error).message)
+                            }
+                          }}
+                          onDelete={() => setDeleting(p)}
+                          onScheduleChange={(cron, enabled) =>
+                            toggleSchedule.mutate({ profile: p, cron, enabled })
                           }
-                        }}
-                        onDelete={() => setDeleting(p)}
-                        onScheduleChange={(cron, enabled) =>
-                          toggleSchedule.mutate({ profile: p, cron, enabled })
-                        }
-                      />
+                        />
+                      </StaggerItem>
                     ))}
-                  </div>
+                  </Stagger>
                 </div>
               </ScrollArea>
             </TabsContent>
@@ -198,7 +200,7 @@ function ProfileCard({
   const tables = cfg.tables?.length ?? 0
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-3">
+    <div className="flex flex-col gap-2 rounded-lg border p-3 transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-md">
       <div className="flex items-center gap-2">
         <span className="truncate text-sm font-medium">{profile.name}</span>
         {profile.scheduleEnabled && (

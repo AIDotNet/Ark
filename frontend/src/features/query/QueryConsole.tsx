@@ -170,6 +170,8 @@ export function QueryConsole({
   const [activeRs, setActiveRs] = useState(0)
   const [resultTab, setResultTab] = useState("")
   const [saveOpen, setSaveOpen] = useState(false)
+  // 每次成功执行自增，作为结果区 key 驱动入场动画
+  const [runSeq, setRunSeq] = useState(0)
   const { resolvedTheme } = useTheme()
 
   const { add: addHistory } = useQueryHistory()
@@ -296,6 +298,7 @@ export function QueryConsole({
       )
       setResult(res)
       setActiveRs(0)
+      setRunSeq((s) => s + 1)
       const rowCount = res.resultSets.reduce((s, rs) => s + rs.rows.length, 0)
       setResultTab(res.resultSets.length > 0 ? "rs-0" : "messages")
       addHistory({
@@ -506,7 +509,7 @@ export function QueryConsole({
           </DropdownMenu>
         </div>
         {running && (
-          <Button size="sm" variant="outline" onClick={cancel}>
+          <Button size="sm" variant="outline" className="animate-in fade-in zoom-in-95 duration-150" onClick={cancel}>
             <Square /> 取消
           </Button>
         )}
@@ -595,11 +598,23 @@ export function QueryConsole({
 
         {/* 右侧运行状态 */}
         <div className="ml-auto flex items-center gap-1.5 pr-1 text-xs text-muted-foreground">
-          {running && <Loader2 className="size-3.5 animate-spin text-primary" />}
+          {running ? (
+            <>
+              <span className="animate-pulse-dot size-2 shrink-0 rounded-full bg-primary" />
+              <Loader2 className="size-3.5 animate-spin text-primary" />
+            </>
+          ) : null}
           {status && <span>{status}</span>}
           {connectionName && !status && <span>{connectionName}</span>}
         </div>
       </div>
+
+      {/* 运行中：工具栏下方不定进度扫条 */}
+      {running && (
+        <div className="relative h-0.5 shrink-0 overflow-hidden bg-primary/15" role="progressbar" aria-label="查询执行中">
+          <div className="animate-indeterminate h-full w-1/3 rounded-full bg-primary" />
+        </div>
+      )}
 
       {/* 编辑器 / 结果：可拖拽分割 */}
       <Resizable direction="vertical" className="min-h-0 flex-1">
@@ -612,7 +627,7 @@ export function QueryConsole({
             {error && (
               <Alert
                 variant={error.cancelled ? "default" : "destructive"}
-                className="gap-2 rounded-none border-x-0 border-t-0 px-3 py-2"
+                className="animate-slide-down gap-2 rounded-none border-x-0 border-t-0 px-3 py-2"
               >
                 <AlertTriangle className="size-4" />
                 <AlertTitle className="text-xs">
@@ -625,7 +640,10 @@ export function QueryConsole({
             )}
 
             {result ? (
-              <div className="flex min-h-0 flex-1 flex-col">
+              <div
+                key={runSeq}
+                className="flex min-h-0 flex-1 animate-in flex-col fade-in slide-in-from-bottom-2 duration-300"
+              >
                 {/* 结果区标签条 */}
                 <div className="flex shrink-0 items-center gap-0.5 border-b px-2">
                   {result.resultSets.map((rs, i) => (
@@ -723,7 +741,7 @@ export function QueryConsole({
                   </span>
                   <span>{result.elapsedMs.toFixed(1)} ms</span>
                   <span className="ml-auto">
-                    <Check className="mr-0.5 inline size-3 text-emerald-500" />
+                    <Check className="mr-0.5 inline size-3 animate-pop-in text-emerald-500" />
                     完成
                   </span>
                 </div>

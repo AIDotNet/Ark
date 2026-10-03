@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useTheme } from "next-themes"
+import { AnimatePresence, motion } from "motion/react"
 import { ArrowLeftRight, Database, Moon, Pencil, RefreshCw, Settings, Sun, Table2, TerminalSquare, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,6 +23,7 @@ import { ConnectionTree } from "@/components/layout/ConnectionTree"
 import { CommandPalette } from "@/components/layout/CommandPalette"
 import { SettingsDialog } from "@/components/layout/SettingsDialog"
 import { TabContent } from "@/features/tabs/TabContent"
+import { easeOutQuart } from "@/components/ui/motion"
 
 const TAB_ICONS: Record<TabKind, typeof Table2> = {
   grid: Table2,
@@ -37,6 +39,8 @@ export function AppShell() {
   const queryClient = useQueryClient()
   const active = tabs.find((t) => t.key === activeKey) ?? null
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 任意 connections 请求在途 → 顶栏刷新图标旋转
+  const connectionsFetching = useIsFetching({ queryKey: ["connections"] }) > 0
 
   return (
     <div className="flex h-svh flex-col overflow-hidden">
@@ -80,7 +84,7 @@ export function AppShell() {
                 size="icon"
                 onClick={() => queryClient.invalidateQueries({ queryKey: ["connections"] })}
               >
-                <RefreshCw className="size-4" />
+                <RefreshCw className={`size-4 ${connectionsFetching ? "animate-spin" : ""}`} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>刷新连接</TooltipContent>
@@ -88,7 +92,19 @@ export function AppShell() {
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" onClick={() => setTheme(isDark ? "light" : "dark")}>
-                {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                {/* 主题图标旋转交叉切换 */}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.span
+                    key={isDark ? "sun" : "moon"}
+                    className="flex"
+                    initial={{ rotate: -90, opacity: 0, scale: 0.6 }}
+                    animate={{ rotate: 0, opacity: 1, scale: 1 }}
+                    exit={{ rotate: 90, opacity: 0, scale: 0.6 }}
+                    transition={{ duration: 0.18, ease: easeOutQuart }}
+                  >
+                    {isDark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                  </motion.span>
+                </AnimatePresence>
               </Button>
             </TooltipTrigger>
             <TooltipContent>{isDark ? "切换到亮色" : "切换到暗色"}</TooltipContent>
@@ -169,7 +185,7 @@ function ActiveTaskBadge() {
   if (!taskId || !task.data || !running) return null
   return (
     <button
-      className="ml-auto flex items-center gap-2 text-foreground hover:underline"
+      className="ml-auto flex animate-in fade-in slide-in-from-bottom-1 items-center gap-2 text-foreground hover:underline duration-300"
       title="查看同步任务"
       onClick={() =>
         openTab({ kind: "sync", title: "数据同步", connectionId: "", database: "", schema: "" })
@@ -197,53 +213,68 @@ function TabsBar({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 overflow-x-auto border-b">
-        {tabs.map((t) => {
-          const Icon = TAB_ICONS[t.kind]
-          const isActive = t.key === activeKey
-          return (
-            <ContextMenu key={t.key}>
-              <ContextMenuTrigger asChild>
-                <button
-                  className={`group flex shrink-0 items-center gap-2 border-r px-3 py-1.5 text-xs ${
-                    isActive
-                      ? "border-b-2 border-b-primary bg-accent/50 font-medium"
-                      : "text-muted-foreground hover:bg-accent/30"
-                  }`}
-                  onClick={() => setActive(t.key)}
-                  onMouseUp={(e) => {
-                    if (e.button === 1) closeTab(t.key)
-                  }}
-                >
-                  <Icon className="size-3.5 shrink-0" />
-                  <span className="max-w-44 truncate">{t.title}</span>
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    aria-label="关闭标签"
-                    className="rounded p-0.5 opacity-40 hover:bg-accent hover:opacity-100"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      closeTab(t.key)
+        {/* AnimatePresence：关闭标签时宽度收起 + 淡出，兄弟标签被 flex 自然推移 */}
+        <AnimatePresence initial={false}>
+          {tabs.map((t) => {
+            const Icon = TAB_ICONS[t.kind]
+            const isActive = t.key === activeKey
+            return (
+              <ContextMenu key={t.key}>
+                <ContextMenuTrigger asChild>
+                  <motion.button
+                    initial={{ opacity: 0, scale: 0.92, y: -4 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.92, width: 0, paddingLeft: 0, paddingRight: 0 }}
+                    transition={{ duration: 0.18, ease: easeOutQuart }}
+                    className={`group flex shrink-0 items-center gap-2 overflow-hidden border-r px-3 py-1.5 text-xs whitespace-nowrap ${
+                      isActive
+                        ? "border-b-2 border-b-primary bg-accent/50 font-medium"
+                        : "text-muted-foreground hover:bg-accent/30"
+                    }`}
+                    onClick={() => setActive(t.key)}
+                    onMouseUp={(e) => {
+                      if (e.button === 1) closeTab(t.key)
                     }}
-                    onKeyDown={(e) => e.key === "Enter" && closeTab(t.key)}
                   >
-                    <X className="size-3" />
-                  </span>
-                </button>
-              </ContextMenuTrigger>
-              <ContextMenuContent>
-                <ContextMenuItem onClick={() => closeTab(t.key)}>关闭</ContextMenuItem>
-                <ContextMenuItem onClick={() => closeOthers(t.key)}>关闭其他</ContextMenuItem>
-                <ContextMenuItem onClick={() => closeRight(t.key)}>关闭右侧</ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem onClick={closeAll}>全部关闭</ContextMenuItem>
-              </ContextMenuContent>
-            </ContextMenu>
-          )
-        })}
+                    <Icon className="size-3.5 shrink-0" />
+                    <span className="max-w-44 truncate">{t.title}</span>
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label="关闭标签"
+                      className="rounded p-0.5 opacity-40 transition-[opacity,background-color] duration-150 hover:bg-accent hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        closeTab(t.key)
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && closeTab(t.key)}
+                    >
+                      <X className="size-3 transition-transform duration-150 group-hover:rotate-90" />
+                    </span>
+                  </motion.button>
+                </ContextMenuTrigger>
+                <ContextMenuContent>
+                  <ContextMenuItem onClick={() => closeTab(t.key)}>关闭</ContextMenuItem>
+                  <ContextMenuItem onClick={() => closeOthers(t.key)}>关闭其他</ContextMenuItem>
+                  <ContextMenuItem onClick={() => closeRight(t.key)}>关闭右侧</ContextMenuItem>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem onClick={closeAll}>全部关闭</ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            )
+          })}
+        </AnimatePresence>
       </div>
       {tabs.map((t) => (
-        <div key={t.key} className={`min-h-0 flex-1 ${t.key === activeKey ? "flex flex-col" : "hidden"}`}>
+        <div
+          key={t.key}
+          className={`min-h-0 flex-1 ${
+            // display 切换会重启动画：激活标签每次切入都有淡入上移，且内容状态保留不卸载
+            t.key === activeKey
+              ? "flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-200"
+              : "hidden"
+          }`}
+          >
           {/* ErrorBoundary：单个标签页渲染异常不拖垮整个应用 */}
           <ErrorBoundary label={t.title}>
             <TabContent tab={t} />
