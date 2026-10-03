@@ -1,0 +1,11 @@
+.git
+.vscode
+.plan
+data
+node_modules
+dist
+**/bin
+**/obj
+*.log
+docker-compose.dev.yml
+README.md

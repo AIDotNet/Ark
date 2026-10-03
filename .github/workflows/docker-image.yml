@@ -1,0 +1,41 @@
+name: docker-image
+
+# 云端构建多架构镜像并推送到 Docker Hub（hejiale010426/ark）
+# 需要在仓库 Settings → Secrets and variables → Actions 配置：
+#   DOCKERHUB_USERNAME — Docker Hub 用户名
+#   DOCKERHUB_TOKEN    — Docker Hub Access Token（Account Settings → Security → Personal access tokens）
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/docker-image.yml"
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            hejiale010426/ark:latest
+            hejiale010426/ark:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

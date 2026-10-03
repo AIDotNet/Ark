@@ -41,6 +41,10 @@ var app = builder.Build();
 
 app.UseCors();
 
+// 前端 SPA（wwwroot，容器镜像构建时由 frontend/dist 拷入；开发环境走 vite dev server，无 wwwroot 时自动跳过）
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // 全局兜底异常处理（/api）：请求体 JSON 反序列化失败发生在端点过滤器之前，
 // UnifiedResponseFilter 捕获不到 → 这里转换为统一包络；其余未捕获异常也不得泄漏堆栈
 app.Use(async (context, next) =>
