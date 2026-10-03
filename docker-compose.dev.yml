@@ -1,0 +1,32 @@
+# Ark 开发环境：PostgreSQL 16 + MySQL 8（SQLite 使用本地文件，无需容器）
+# 启动: docker compose -f docker-compose.dev.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ark-postgres
+    environment:
+      POSTGRES_USER: ark
+      POSTGRES_PASSWORD: ark123
+      POSTGRES_DB: ark_demo
+    ports:
+      - "5432:5432"
+    volumes:
+      - ark_pg_data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.4
+    container_name: ark-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ark123
+      MYSQL_USER: ark
+      MYSQL_PASSWORD: ark123
+      MYSQL_DATABASE: ark_demo
+    ports:
+      - "3306:3306"
+    volumes:
+      - ark_mysql_data:/var/lib/mysql
+
+volumes:
+  ark_pg_data:
+  ark_mysql_data:

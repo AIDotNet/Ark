@@ -1,0 +1,22 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+data/
+!data/.gitkeep
+
+# Node / 前端
+node_modules/
+dist/
+*.local
+.vite/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+.DS_Store
+
+# 日志
+*.log

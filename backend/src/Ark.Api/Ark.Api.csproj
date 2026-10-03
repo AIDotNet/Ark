@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Ark.Core\Ark.Core.csproj" />
+    <ProjectReference Include="..\Ark.Providers.Abstractions\Ark.Providers.Abstractions.csproj" />
+    <ProjectReference Include="..\Ark.Providers.PostgreSQL\Ark.Providers.PostgreSQL.csproj" />
+    <ProjectReference Include="..\Ark.Providers.MySQL\Ark.Providers.MySQL.csproj" />
+    <ProjectReference Include="..\Ark.Providers.SQLite\Ark.Providers.SQLite.csproj" />
+    <ProjectReference Include="..\Ark.Sync\Ark.Sync.csproj" />
+  </ItemGroup>
+</Project>

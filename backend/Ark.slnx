@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Ark.Api/Ark.Api.csproj" />
+    <Project Path="src/Ark.Core/Ark.Core.csproj" />
+    <Project Path="src/Ark.Providers.Abstractions/Ark.Providers.Abstractions.csproj" />
+    <Project Path="src/Ark.Providers.MySQL/Ark.Providers.MySQL.csproj" />
+    <Project Path="src/Ark.Providers.PostgreSQL/Ark.Providers.PostgreSQL.csproj" />
+    <Project Path="src/Ark.Providers.SQLite/Ark.Providers.SQLite.csproj" />
+    <Project Path="src/Ark.Sync/Ark.Sync.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Ark.Core.Tests/Ark.Core.Tests.csproj" />
+    <Project Path="tests/Ark.Integration.Tests/Ark.Integration.Tests.csproj" />
+    <Project Path="tests/Ark.Sync.Tests/Ark.Sync.Tests.csproj" />
+  </Folder>
+</Solution>
