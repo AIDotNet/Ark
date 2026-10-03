@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
 import { ArrowRight, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
@@ -89,10 +89,10 @@ export function NewSyncFlow({
   onSaved?: () => void
 }) {
   const [step, setStep] = useState<Step>(0)
-  // 步骤方向：前进左滑入、后退右滑入
-  const stepDir = useRef<1 | -1>(1)
+  // 步骤方向：前进左滑入、后退右滑入（state 而非 ref：render 期需要读取）
+  const [stepDir, setStepDir] = useState<1 | -1>(1)
   const go = (next: Step) => {
-    stepDir.current = next >= step ? 1 : -1
+    setStepDir(next >= step ? 1 : -1)
     setStep(next)
   }
   const [d, setD] = useState<Draft>(() => ({
@@ -315,10 +315,10 @@ export function NewSyncFlow({
 
         <ScrollArea className="max-h-[62vh] pr-2">
           {/* mode="wait"：旧步骤先滑出，新步骤再滑入，方向由 go() 决定 */}
-          <AnimatePresence mode="wait" custom={stepDir.current} initial={false}>
+          <AnimatePresence mode="wait" custom={stepDir} initial={false}>
             <motion.div
               key={step}
-              custom={stepDir.current}
+              custom={stepDir}
               variants={stepVariants}
               initial="enter"
               animate="center"

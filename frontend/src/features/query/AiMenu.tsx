@@ -19,6 +19,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "@/lib/api"
 
@@ -198,8 +199,10 @@ export function AiMenu({
           </DialogHeader>
           <div className="max-h-[50vh] overflow-y-auto">
             {explain.isPending ? (
-              <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-                <Loader2 className="animate-spin" /> AI 分析中…
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-3.5 w-4/5" />
+                <Skeleton className="h-3.5 w-full" />
+                <Skeleton className="h-3.5 w-3/5" />
               </div>
             ) : (
               <pre className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-xs leading-relaxed">
@@ -218,8 +221,10 @@ export function AiMenu({
             <DialogDescription className="font-mono text-xs">{lastError}</DialogDescription>
           </DialogHeader>
           {fix.isPending ? (
-            <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
-              <Loader2 className="animate-spin" /> AI 分析中…
+            <div className="space-y-2 p-4">
+              <Skeleton className="h-3.5 w-full" />
+              <Skeleton className="h-3.5 w-11/12" />
+              <Skeleton className="h-3.5 w-2/3" />
             </div>
           ) : (
             <>
