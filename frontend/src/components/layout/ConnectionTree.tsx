@@ -182,7 +182,7 @@ export function ConnectionTree() {
         </div>
       </div>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="p-1 text-sm">
           {connections.isLoading && (
             <div className="space-y-2 p-2">

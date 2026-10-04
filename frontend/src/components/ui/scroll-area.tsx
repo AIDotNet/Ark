@@ -10,6 +10,8 @@ function ScrollArea({
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
+      /* 默认 hover 才显示滚动条，长列表容易"看不到"；改为常显 */
+      type="always"
       className={cn("relative", className)}
       {...props}
     >
@@ -46,7 +48,7 @@ function ScrollBar({
     >
       <ScrollAreaPrimitive.ScrollAreaThumb
         data-slot="scroll-area-thumb"
-        className="relative flex-1 rounded-full bg-border"
+        className="relative flex-1 rounded-full bg-foreground/25 transition-colors hover:bg-foreground/40"
       />
     </ScrollAreaPrimitive.ScrollAreaScrollbar>
   )

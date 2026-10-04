@@ -136,6 +136,27 @@
   }
 }
 
+/* ---------------- 原生滚动条：轨道透明，仅保留半透明滑块（与 ui/scroll-area 的 Radix 滚动条配色一致） ---------------- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background: color-mix(in oklch, var(--color-foreground) 25%, transparent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklch, var(--color-foreground) 40%, transparent);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
 /* ---------------- Motion keyframes（顶层声明，供 --animate-* 令牌与自定义类引用） ---------------- */
 
 @keyframes fade-in {
