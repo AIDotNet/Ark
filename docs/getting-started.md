@@ -1,0 +1,99 @@
+# 快速开始
+
+## 环境要求
+
+| 组件 | 版本 | 用途 |
+|---|---|---|
+| .NET SDK | 10.0+ | 运行后端 Ark.Api |
+| Node.js | 20+（开发验证于 24） | 运行前端 Vite 开发服务器 |
+| pnpm | 9+ | 前端包管理（`corepack enable` 即可获得） |
+| Docker | 可选 | 运行开发用 PostgreSQL 16 / MySQL 8.4；SQLite 无需容器 |
+| Git | — | 获取代码 |
+
+## 方式一：开发模式（前后端分离）
+
+```bash
+# 0) 可选：启动开发用 PostgreSQL + MySQL（SQLite 无需此步）
+docker compose -f docker-compose.dev.yml up -d
+
+# 1) 启动后端（http://localhost:5170）
+cd backend/src/Ark.Api && dotnet run
+#    OpenAPI: http://localhost:5170/openapi/v1.json （仅 Development 环境暴露）
+
+# 2) 启动前端（http://localhost:5173，已配置 /api 代理到 5170）
+cd frontend
+pnpm install
+pnpm dev
+```
+
+启动后打开 <http://localhost:5173> 即可使用。
+
+> Ark 自身的数据（连接配置、同步任务与报告、AI 设置）存放在仓库根目录 `data/ark.db`（SQLite 单文件，首次启动自动建表）。删除该文件即重置所有配置。
+
+## 方式二：Docker（前后端合一镜像）
+
+仓库提供多阶段 `backend/Dockerfile`（node 构建前端 → sdk 发布 → aspnet 运行），并有 GitHub Actions 多架构推送。容器要点：
+
+- 监听 `ASPNETCORE_HTTP_PORTS=8080`
+- 数据卷 `VOLUME /data`：`ark.db` 与 Data Protection 密钥都放在 `/data`（容器内 `HOME=/data`，否则重建容器后新密钥无法解密已加密的连接密码）
+- 前端静态资源被拷入 `wwwroot`，由后端直接托管，单端口访问
+
+## 测试
+
+```bash
+dotnet test backend/tests/Ark.Core.Tests        # 单元测试（类型映射/函数翻译/Diff/行哈希/CSV）
+dotnet test backend/tests/Ark.Sync.Tests        # 同步引擎测试
+dotnet test backend/tests/Ark.Integration.Tests # Testcontainers 跨库集成（无 Docker 自动跳过）
+cd frontend && pnpm build                       # tsc + vite build
+```
+
+## 演示数据
+
+教程截图使用一个 SQLite 商城示例库，可用以下脚本一键生成：
+
+```bash
+mkdir -p data/demo
+sqlite3 data/demo/shop.db <<'SQL'
+CREATE TABLE customers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  city TEXT,
+  vip INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE products (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL, category TEXT NOT NULL,
+  price REAL NOT NULL DEFAULT 0, stock INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  status TEXT NOT NULL DEFAULT 'pending',
+  total REAL NOT NULL DEFAULT 0, note TEXT,
+  order_date TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE order_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  order_id INTEGER NOT NULL REFERENCES orders(id),
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  quantity INTEGER NOT NULL DEFAULT 1, unit_price REAL NOT NULL DEFAULT 0
+);
+CREATE TABLE audit_log (message TEXT, created_at TEXT);  -- 故意无主键，演示只读网格
+CREATE VIEW v_order_summary AS
+SELECT o.id AS order_id, c.name AS customer, o.status, o.total, o.order_date
+FROM orders o JOIN customers c ON c.id = o.customer_id;
+-- 再自行插入若干 customers / products / orders / order_items 数据
+SQL
+sqlite3 data/demo/shop_target.db "VACUUM;"   # 空库作为同步目标
+```
+
+然后在界面左侧点 **＋新建连接**，类型选 SQLite，填入文件路径即可（见[连接管理教程](./tutorial/01-connection-management.md)）。
+
+## 下一步
+
+- 不熟悉界面？从 [对象浏览](./tutorial/02-object-browser.md) 开始
+- 想同步两个库？直接看 [数据同步](./tutorial/06-data-sync.md)
+- 关心设计实现？看 [系统架构](./architecture.md)

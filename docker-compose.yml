@@ -1,0 +1,14 @@
+# Ark 生产部署：前后端合一镜像（GitHub Actions 多架构推送）
+# 启动: docker compose up -d    （数据持久化在命名卷 ark_data，含 ark.db 与 DataProtection 密钥）
+services:
+  ark:
+    image: hejiale010426/ark:latest
+    container_name: ark
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ark_data:/data
+
+volumes:
+  ark_data:

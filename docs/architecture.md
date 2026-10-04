@@ -1,0 +1,117 @@
+# 系统架构
+
+> 代码基线：仓库当前 main 分支。后端 7 个源码项目 + 3 个测试项目，前端 Vite + React 19 单页应用。
+
+## 1. 总体分层
+
+```
+                        ┌──────────────────────────────────────────────┐
+                        │                Ark.Api（宿主层）              │
+                        │  Minimal API 端点 / 统一响应过滤器 /           │
+                        │  ark.db 自存储 / Provider 工厂 / AI 代理 /     │
+                        │  后台同步调度器                               │
+                        └──┬───────────┬───────────┬───────────┬───────┘
+                           │           │           │           │
+             ┌─────────────▼──┐  ┌─────▼──────┐  ┌─▼──────────────────────┐
+             │   Ark.Sync     │  │  Providers │  │  Providers（方言实现）   │
+             │ 同步引擎/计划器 │  │.Abstractions│ │ PostgreSQL / MySQL /   │
+             │ 调度器/导入导出 │  │ IDbProvider │ │ SQLite                 │
+             └───┬───────┬────┘  │ IDdlGenerator│ └──────────┬─────────────┘
+                 │       │       └─────┬──────┘            │
+             ┌───▼───────▼─────────────▼───────────────────▼──────────┐
+             │              Ark.Core（零外部依赖）                      │
+             │  Canonical 元数据模型 · 类型映射 · 函数语义翻译 ·          │
+             │  DTO/包络/错误码 · CSV 解析                              │
+             └────────────────────────────────────────────────────────┘
+```
+
+依赖方向严格单向。后端除三个 ADO 驱动（Npgsql / MySqlConnector / Microsoft.Data.Sqlite）外几乎无第三方依赖。
+
+| 项目 | 职责 | 依赖 |
+|---|---|---|
+| `Ark.Core` | 纯模型与纯算法：Canonical 中间模型、规范类型、函数语义、DTO、响应包络与错误码、CSV 解析 | 无 |
+| `Ark.Providers.Abstractions` | `IDbProvider` / `IDdlGenerator` / `ProviderBase` 共享实现 / `ISnapshotSession` / `IBulkWriter` / `DbCapabilities` 能力矩阵 | Core |
+| `Ark.Providers.PostgreSQL` | Npgsql；COPY 批量通道；pg_catalog 元数据 | Abstractions |
+| `Ark.Providers.MySQL` | MySqlConnector；LOAD DATA LOCAL 批量；information_schema 元数据 | Abstractions |
+| `Ark.Providers.SQLite` | Microsoft.Data.Sqlite；单事务多值 INSERT；PRAGMA 元数据 | Abstractions |
+| `Ark.Sync` | StructureDiffer → TableConverter → SyncPlanner → SyncTaskManager → DataTransferEngine / ChunkedDiffEngine → SyncValidator；SyncScheduler + Cron；Exporter / Importer | Core + Abstractions |
+| `Ark.Api` | 端点编排、统一包络过滤器、ark.db 存储（裸 ADO）、Data Protection 密码加密、AI 代理、调度回调 | 全部 |
+
+前端分层：
+
+```
+App.tsx (QueryClient + Theme + Tooltip)
+└─ AppShell（顶栏 / 可拖拽左右分栏 / 状态栏）
+   ├─ ConnectionTree（连接树，TanStack Query 懒加载 + 15s 缓存）
+   └─ TabsBar + TabContent（Zustand 多标签工作区）
+      ├─ DataGrid        TanStack Table + 虚拟滚动 + 变更集
+      ├─ TableDesigner   列编辑 → DDL 预览 → 执行
+      ├─ QueryConsole    CodeMirror 6 + 多结果集 + 历史/收藏 + AI
+      ├─ SyncCenter      Profile 卡片 + 4 步向导 + 任务视图 + DiffViewer
+      └─ ImportExportDialog
+   lib/api.ts（fetch 封装：包络解包 → code!==0 抛 ArkApiError）
+   stores/*（workspace 多标签 / query-session / query-history / saved-queries / task）
+```
+
+无路由库——「路由」即 workspace store 里的标签数组（`grid | designer | query | sync` 四种），所有标签 DOM 常驻、`display` 切换，切换不丢状态；每个标签包独立 ErrorBoundary。
+
+## 2. 核心机制
+
+### 2.1 Canonical 中间模型
+
+所有跨库操作（同步、设计器、对比）都经由 `CanonicalTable` 中间表示。方言差异被压缩在两个边界内：**读元数据 → Canonical** 与 **Canonical → DDL**。新增一种数据库只需实现 `IDbProvider` + `IDdlGenerator`。
+
+### 2.2 类型映射：降级必须可见
+
+以 18 种规范类型为中枢双向映射（`Ark.Core/Typing/TypeMapper`）：
+
+- 方向一（读元数据）：如 MySQL `tinyint(1)`→Boolean、PG 数组→Json（降级）、SQLite 按类型亲和子串匹配
+- 方向二（写 DDL）：每个映射返回 `{Sql, Warnings[]}`，**无法精确映射必须降级 + 中文警告**，例如 `Boolean→SQLite INTEGER`（0/1 存储）、`Guid→SQLite TEXT`、`DateTimeOffset→MySQL datetime`（丢时区）
+- MySQL 专项：DECIMAL 精度 >65 截断、VARCHAR >16383 降级 text（utf8mb4 行限制）
+
+### 2.3 函数翻译：语义而非字符串
+
+同步计划阶段把源端**默认值 / 生成列表达式**识别为 9 种语义再按目标方言发射（`FunctionTranslator`）：CurrentTimestamp / CurrentDate / CurrentTime / UuidV4 / Coalesce / Concat / Literal / Unrecognized / None。
+
+例如 `now()`、`CURRENT_TIMESTAMP`、`datetime('now')` 都识别为「当前时间戳」，输出为目标方言的等价写法；`gen_random_uuid()` → SQLite 会得到**明确的 error**（SQLite 无内置 uuid 函数）而不是错误 SQL；无法识别的表达式原样复制 + warning 请人工确认。
+
+### 2.4 计划快照消除 TOCTOU
+
+预览生成的 `ExecutionPlan`（含 SQL 全文、破坏性标记、稳定动作 ID=`table:kind:sql`）被**原样持久化并在执行阶段回放**，零重规划——「预览所见即执行所得」。动作 ID 内容派生，因此支持勾选跳过与断点续传时跳过已完成动作。
+
+计划期校验前移：WHERE 片段试编译（真实 `SELECT 1 … LIMIT 1` 试跑）、列映射存在性/冲突检查、函数依赖真实查询（PG 查 `pg_extension`）、脱敏主键冲突预警。
+
+### 2.5 同步执行
+
+- **一致性快照**：源端 REPEATABLE READ（PG 只读事务 / MySQL CONSISTENT SNAPSHOT / SQLite BEGIN），多表多页读到同一版本
+- **表间调度**：按外键依赖 Kahn 分层（被引用表先建，循环依赖保持原序），层内按 `MaxParallelTables` 并行，视图最后串行
+- **全量复制**：keyset 分页读源（`WHERE pk > after ORDER BY pk LIMIT batch`），经容量 2 的有界 Channel 读写流水线；写通道按优先级 PG **COPY** / MySQL **LOAD DATA LOCAL**（失败自动降级批量 INSERT）/ SQLite **单事务多值 INSERT**；写前 `synchronous_commit=off`、`FOREIGN_KEY_CHECKS=0` 等会话调优，写后复位（含 MySQL `autocommit=1` 释放 MDL 防止后续 ALTER 死锁）；完成后 `MAX(pk)` 对齐自增/序列
+- **行级 Diff**：以源端窗口（默认 2000 行）为基准，目标侧主键范围谓词翻页，窗口内字典匹配；行哈希 = 列名排序 + 值规范化（UTC 时间、decimal 去尾零、`s:` 前缀防碰撞）+ SHA256，且**按目标列的规范类型归一**——从根上杜绝跨方言「永动更新」
+- **校验**：行数对比必做；Sample 模式追加只读行级 Diff 复检
+- **任务系统**：全局并发 2；状态全量 JSON 快照落 ark.db（2 秒节流）；取消在块/批边界生效；`Interrupted` 任务可续传（跳过已完成表/动作、从 LastKey 继续）或重跑；SSE 推送进度（700ms 去重轮询），断线自动降级
+- **定时调度**：`SyncScheduler` 后台服务每 30s 扫描启用 cron 的 Profile，自研 5 段 cron 解析（`* , - /`，日/周取或），服务器本地时区，错过不补跑
+
+### 2.6 只读模式三层防护
+
+驱动层（SQLite `SqliteOpenMode.ReadOnly`）→ SQL 层（首关键字白名单，违规 403/2004）→ EXPLAIN 层（只允许查询语句生成计划）。
+
+### 2.7 安全默认
+
+- 标识符白名单正则（`Identifier.EnsureValid`）拦截注入到 DDL/标识符位
+- 筛选/排序/变更全部参数化，列名先白名单 + 存在性双重校验
+- 连接密码与 AI Key 走 ASP.NET Data Protection（purpose `Ark.ConnectionPasswords`），GET 永不回显
+- 导入端点显式 `DisableAntiforgery`（单机工具、无 Cookie 会话暴露面）
+
+## 3. 前端关键设计
+
+- **API 层**：`lib/api.ts` 统一 fetch → 解析包络 → `code !== 0` 抛 `ArkApiError(code, message)`；下载类端点（导出/脚本）绕过包络直接处理 Blob
+- **状态**：Zustand 多 store；查询会话与历史持久化 localStorage（LRU：会话 50 / 历史 500 / 收藏 100）
+- **数据网格**：TanStack Table + `@tanstack/react-virtual`（行高 33），列宽拖拽；变更集（inserts/updates/deletes）一次性提交
+- **SQL 控制台**：手写分号扫描器（注释/引号/dollar-quote 感知）实现「光标语句」语义；补全 schema 来自后端 `completion` 端点（5 分钟缓存）
+- **实时**：同步任务用 SSE（`useTaskSse`），出错自动降级 1.5s 轮询
+
+## 4. 部署形态
+
+- 开发：前端 Vite（5173，`/api` 代理 5170）+ `dotnet run`（5170）
+- 容器：单镜像单端口 8080，前端 `dist` 拷入 `wwwroot` 由后端托管；`VOLUME /data` 存 ark.db 与 Data Protection 密钥（`HOME=/data` 保证密钥随卷持久化，否则容器重建后无法解密已有密码）
+- GitHub Actions 构建多架构镜像推送 Docker Hub
