@@ -1,0 +1,96 @@
+---
+title: "生产部署"
+description: "Docker 镜像、docker-compose 编排、数据卷备份与升级注意事项"
+---
+
+## 镜像
+
+官方多架构镜像（amd64 / arm64）由 GitHub Actions 构建推送：
+
+```bash
+docker pull hejiale010426/ark:latest
+```
+
+镜像为**前后端合一**：多阶段构建（node 构建前端 → sdk:10 发布 → aspnet:10 运行），前端静态资源被拷入 `wwwroot` 由后端直接托管，单端口暴露。
+
+## docker-compose（推荐）
+
+仓库根的 `docker-compose.yml` 即生产编排：
+
+```yaml
+services:
+  ark:
+    image: hejiale010426/ark:latest
+    container_name: ark
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ark_data:/data
+
+volumes:
+  ark_data:
+```
+
+```bash
+docker compose up -d
+# 访问 http://<host>:8080
+```
+
+## 数据卷：/data 里有什么
+
+| 内容 | 说明 |
+|---|---|
+| `ark.db` | Ark 自身数据：连接配置、同步任务与报告、Profile、AI 设置 |
+| `aspnet/DataProtection-Keys/` | Data Protection 密钥，用于解密 ark.db 中加密的连接密码与 AI Key |
+
+> 容器内 `HOME=/data`，密钥随卷持久化。**丢失密钥 = 已存密码不可解密**，需要重新录入所有连接密码。
+
+### 备份
+
+```bash
+# 冷备（推荐）：停服后直接拷贝
+docker compose stop ark
+docker run --rm -v ark_ark_data:/data -v $PWD:/backup alpine \
+  tar czf /backup/ark-data-$(date +%F).tar.gz -C /data .
+docker compose start ark
+
+# 恢复
+docker run --rm -v ark_ark_data:/data -v $PWD:/backup alpine \
+  sh -c "cd /data && tar xzf /backup/ark-data-YYYY-MM-DD.tar.gz"
+```
+
+也可在线备份 ark.db（SQLite）：`sqlite3 /data/ark.db ".backup /data/ark-backup.db"`（进入容器执行）。
+
+### 连接业务数据库
+
+Ark 不代理数据库端口——浏览器直连你机器/内网的 PostgreSQL（5432）/ MySQL（3306）；SQLite 则要求文件路径**在 Ark 后端所在机器/卷上**。因此：
+
+- 容器化部署 SQLite 时，把 `.db` 文件目录挂载进容器（如 `-v ./data/db:/data/db`），连接路径填容器内路径 `/data/db/xxx.db`
+- 云端部署注意：Ark 所在主机必须能直连目标数据库；不要把端口直接暴露公网（无登录体系，见 [FAQ](/docs/faq)）
+
+## 反向代理与 TLS
+
+在 Nginx / Caddy 后面反代 `8080` 即可。注意两点：
+
+- **WebSocket/SSE**：同步任务进度用 SSE（`/api/sync/tasks/*/events`），反代需关闭缓冲（Nginx：`proxy_buffering off;`）
+- 上传大小：导入文件走 multipart，按需调整 `client_max_body_size`
+
+## 升级
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+- ark.db 的表结构由后端启动时自动迁移（`CREATE TABLE IF NOT EXISTS`），跨小版本可直接升级
+- 升级前建议按上文做一次数据卷备份
+- 镜像标签：`latest` 跟随 main；生产可固定到具体版本号
+
+## 从源码构建镜像
+
+```bash
+docker build -t ark:local -f backend/Dockerfile .
+docker run -p 8080:8080 -v ark_data:/data ark:local
+```
+
+构建过程自动完成前端 `pnpm build` 与后端 `dotnet publish`，无需本地安装 .NET/Node。

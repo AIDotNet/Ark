@@ -33,8 +33,20 @@ backend/
   src/Ark.Api                       # Minimal API 端点、统一响应过滤器、ark.db 存储
   tests/                            # 单元 + 真实链路 + Testcontainers
 frontend/                           # Vite + React + shadcn/ui
+docs/                               # 文档站（Fumadocs，源文件 docs/content/docs）
 docker-compose.dev.yml              # 开发用 PostgreSQL 16 + MySQL 8.4
+docker-compose.yml                  # 生产部署
 ```
+
+## 文档
+
+完整文档站基于 [Fumadocs](https://fumadocs.dev) 构建，位于 `docs/`：
+
+```bash
+cd docs && npm install && npm run dev   # http://localhost:3000
+```
+
+包含：8 篇图文教程（28 张真实界面截图）、系统架构、同步引擎深入、API 参考、生产部署、开发指南与 FAQ。源文件为 `docs/content/docs/*.mdx`，支持全文搜索与 LLM 友好输出（`/llms.txt`）。
 
 ## 启动
 

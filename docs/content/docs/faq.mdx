@@ -1,4 +1,7 @@
-# FAQ 与已知边界
+---
+title: "FAQ 与已知边界"
+description: "常见问题解答、v1 功能边界与故障排查"
+---
 
 ## 安装与启动
 
@@ -14,7 +17,7 @@ Ark v1 是单机单用户工具，**没有登录体系**；直接启动即用。
 ## 连接
 
 **Q：支持哪些数据库？**
-PostgreSQL / MySQL / SQLite。其他数据库（如 SQL Server、Oracle）暂不支持；新增数据库需实现 `IDbProvider` + `IDdlGenerator` 两个接口（见[架构文档](./architecture.md)）。
+PostgreSQL / MySQL / SQLite。其他数据库（如 SQL Server、Oracle）暂不支持；新增数据库需实现 `IDbProvider` + `IDdlGenerator` 两个接口（见[架构文档](/docs/architecture)）。
 
 **Q：连接密码存在哪，安全吗？**
 存于 `data/ark.db` 的 `connections.password_enc` 列，使用 ASP.NET Data Protection 加密（密钥默认在 `~/.aspnet/DataProtection-Keys`，容器内在 `/data`）。接口永不回显密码。

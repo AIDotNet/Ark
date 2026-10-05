@@ -1,0 +1,14 @@
+{
+  "title": "图文教程",
+  "defaultOpen": true,
+  "pages": [
+    "connections",
+    "object-browser",
+    "data-grid",
+    "table-designer",
+    "query-console",
+    "data-sync",
+    "import-export",
+    "shortcuts-settings"
+  ]
+}

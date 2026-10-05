@@ -1,14 +1,17 @@
-# 教程 6：数据同步
+---
+title: "数据同步"
+description: "4 步同步向导、先对比再同步、行级 Diff、定时调度与断点续传"
+---
 
 顶栏 **数据同步** 打开同步中心。同步能力分两层：**同步配置（Profile）** 管理可复用、可定时的同步任务；**新建同步向导** 一次性走完 源 → 目标 → 范围 → 审阅 → 执行。
 
-![同步中心](./images/19-sync-center.png)
+![同步中心](/images/19-sync-center.png)
 
 同步中心分「同步配置」与「任务历史」两个 Tab。配置卡片上可直接运行 / 编辑 / 复制 / 删除，卡片内嵌定时调度开关（本图为一个指向已删除连接的旧配置，字段显示为「未知连接」）。
 
 ## 1. 第一步：源与目标
 
-![向导第 1 步](./images/20-sync-step1-source-target.png)
+![向导第 1 步](/images/20-sync-step1-source-target.png)
 
 - 左右两侧分别选择 **源** 与 **目标** 的连接和数据库
 - 目标为 PostgreSQL 时可额外指定「目标 schema」（跨方言同步默认 `public`）
@@ -16,7 +19,7 @@
 
 ## 2. 第二步：范围与选项
 
-![向导第 2 步](./images/21-sync-step2-scope-options.png)
+![向导第 2 步](/images/21-sync-step2-scope-options.png)
 
 **同步模式**：
 
@@ -37,7 +40,7 @@
 
 ## 3. 第三步：审阅（计划预览）
 
-![向导第 3 步：计划审阅](./images/22-sync-step3-plan-review.png)
+![向导第 3 步：计划审阅](/images/22-sync-step3-plan-review.png)
 
 点 **生成同步计划** 后进入审阅页。计划是一个**完整快照**——「N 张表 · 快照 xxxx（执行时使用此快照，不重新规划）」，预览所见即执行所得：
 
@@ -52,7 +55,7 @@
 
 ## 4. 第四步：执行
 
-![向导第 4 步：执行与报告](./images/23-sync-step4-run-report.png)
+![向导第 4 步：执行与报告](/images/23-sync-step4-run-report.png)
 
 - 状态 Badge + 当前表 + 行级进度 + 百分比
 - **实时日志**自动滚动；**报告表**逐表列出 DDL 成功/失败、插入/更新/删除行数、校验结果、耗时、状态
@@ -63,25 +66,25 @@
 
 ## 5. 先对比再同步（行级 Diff）
 
-![对比结果](./images/25-sync-compare-result.png)
+![对比结果](/images/25-sync-compare-result.png)
 
 打开「先对比再同步」后，第二步的按钮变为 **开始对比**。对比任务以**行哈希**逐块比对源与目标（跨方言值归一：时间统一 UTC、decimal 去尾零、布尔归一，避免「永动更新」误报），结果按表展示：`+新增 / ~更新 / -删除` 与「查看差异行」入口。
 
 点 **由对比结果生成同步计划** 可把差异转为执行计划：
 
-![由对比生成计划](./images/26-sync-compare-to-plan.png)
+![由对比生成计划](/images/26-sync-compare-to-plan.png)
 
 ## 6. 查看差异行
 
 任务历史 → 任务的 **查看** → 表卡片的 **查看差异行**：
 
-![差异行查看器](./images/27-sync-diff-viewer.png)
+![差异行查看器](/images/27-sync-diff-viewer.png)
 
 新增 / 变更 / 删除三个 Tab（带计数），变更行以「目标旧值（划线）+ 源新值（高亮）」双列对比展示，分页游标加载。
 
 ## 7. 任务历史与定时调度
 
-![任务历史](./images/24-sync-task-history.png)
+![任务历史](/images/24-sync-task-history.png)
 
 - 历史列表展示每次任务的 状态（Completed / Failed / PartiallyFailed / Interrupted…）、时间与进度
 - 已保存的 Profile 卡片支持：**▶ 立即运行**、编辑（带初始配置重新打开向导）、复制、删除、卡片内直接改 cron

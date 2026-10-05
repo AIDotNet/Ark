@@ -1,4 +1,7 @@
-# 教程 1：连接管理
+---
+title: "连接管理"
+description: "新建/测试/编辑/删除连接，只读模式与密码存储"
+---
 
 所有操作从左侧「连接」树开始。本教程演示新建一个 SQLite 连接；PostgreSQL / MySQL 只是表单字段不同。
 
@@ -6,11 +9,11 @@
 
 点击左侧树顶部的 **＋** 按钮。
 
-![主界面总览](./images/01-workspace-overview.png)
+![主界面总览](/images/01-workspace-overview.png)
 
 ## 2. 填写连接信息
 
-![新建连接对话框](./images/02-connection-dialog.png)
+![新建连接对话框](/images/02-connection-dialog.png)
 
 | 字段 | 说明 |
 |---|---|
@@ -24,13 +27,13 @@
 
 本教程填入：名称 `Demo 商城`、类型 `SQLite`、路径 `/Volumes/code/Ark/data/demo/shop.db`。
 
-![填写 SQLite 表单](./images/03-connection-form-sqlite.png)
+![填写 SQLite 表单](/images/03-connection-form-sqlite.png)
 
 ## 3. 测试连接
 
 点击 **测试连接**，成功会内联显示服务器版本与耗时（如 `连接成功：SQLite 3.46.1 (3ms)`），失败则显示红色错误详情，不会创建连接。
 
-![测试连接成功](./images/04-connection-test-ok.png)
+![测试连接成功](/images/04-connection-test-ok.png)
 
 点击 **创建** 保存。连接配置写入服务端 `data/ark.db`，密码使用 ASP.NET Data Protection 加密，接口永不回显（只有 `hasPassword` 标记）。
 

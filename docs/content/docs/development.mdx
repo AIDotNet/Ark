@@ -1,0 +1,88 @@
+---
+title: "开发指南"
+description: "仓库结构、测试矩阵、API 类型生成与新增数据库方言指南"
+---
+
+## 仓库结构
+
+```
+backend/
+  src/
+    Ark.Core                        # DTO、包络/错误码、Canonical 模型、类型映射、函数翻译（零依赖）
+    Ark.Providers.Abstractions      # IDbProvider / IDdlGenerator / ProviderBase / 能力矩阵
+    Ark.Providers.PostgreSQL|MySQL|SQLite
+    Ark.Sync                        # 结构 Diff、计划器、全量/行级Diff 引擎、任务调度、导入导出
+    Ark.Api                         # Minimal API 端点、统一响应过滤器、ark.db 存储
+  tests/
+    Ark.Core.Tests                  # 单元：类型映射 / 函数翻译 / Diff / 行哈希 / CSV
+    Ark.Sync.Tests                  # 同步引擎
+    Ark.Integration.Tests           # Testcontainers 跨库集成（无 Docker 自动跳过）
+frontend/                           # Vite + React 19 + Tailwind v4 + shadcn/ui
+docs/                               # 本文档站（Fumadocs）
+docker-compose.dev.yml              # 开发用 PostgreSQL 16 + MySQL 8.4
+docker-compose.yml                  # 生产部署
+```
+
+## 日常命令
+
+```bash
+# 后端
+cd backend/src/Ark.Api && dotnet run        # http://localhost:5170
+
+# 前端
+cd frontend && pnpm install && pnpm dev     # http://localhost:5173（/api 代理到 5170）
+pnpm lint                                   # oxlint
+pnpm build                                  # tsc -b && vite build
+
+# 测试
+dotnet test backend/tests/Ark.Core.Tests
+dotnet test backend/tests/Ark.Sync.Tests
+dotnet test backend/tests/Ark.Integration.Tests   # 需要 Docker；网络不可达时自动跳过
+
+# 文档站
+cd docs && npm run dev                      # http://localhost:3000
+npm run build && npm start
+```
+
+## 前端约定
+
+- **API 类型生成**：后端 OpenAPI 变更后运行 `pnpm gen:api`（从 `http://localhost:5170/openapi/v1.json` 重新生成 `src/types/openapi.d.ts`；业务代码引用手写的 `types/api.ts`）
+- **API 封装**：所有请求经 `lib/api.ts`，统一解包 `{code, message, data}`，`code !== 0` 抛 `ArkApiError`
+- **状态管理**：Zustand 多 store（workspace 标签 / query-session / query-history / saved-queries / task）；UI 组件一律用 shadcn/ui（`components/ui`），图标 lucide-react
+- **标签页**：四种 `kind`（grid / designer / query / sync）在 `features/tabs/TabContent.tsx` 分发；新增功能页面时在此注册新类型
+
+## 后端约定
+
+- **统一包络**：所有 `/api` 端点经 `UnifiedResponseFilter` 返回 `{code, message, data, traceId, timestamp}`；业务错误抛 `ArkException(错误码, 消息, HTTP 状态)`。新错误码先在 `ApiEnvelope` 常量中登记（分段：1xxx 通用 / 2xxx 连接 / 3xxx 元数据与 DDL / 4xxx 数据 / 5xxx 同步 / 6xxx AI）
+- **数据库访问**：除 ark.db 自存储外不引入 ORM；Provider 内全部参数化 SQL，列名先白名单 + 存在性校验
+- **降级原则**：类型映射 / 函数翻译遇到无法精确转换的情况必须产出显式警告或 error issue，禁止静默处理
+- **标识符**：任何拼进 DDL 的表名/列名必须过 `Identifier.EnsureValid`
+
+## 新增数据库方言
+
+以「实现两个接口 + 声明能力」为核心步骤：
+
+1. 新建 `Ark.Providers.<Dialect>` 项目，引用 `Ark.Providers.Abstractions`
+2. 实现 `IDbProvider`：
+   - 元数据查询：库/schema/表/列/主键/索引/外键 → `CanonicalTable`
+   - 行读写：结构化筛选分页（`ReadRowsAsync`）、变更集（`ApplyChangesAsync`）
+   - 同步运行时：`BeginSnapshotAsync`（一致性快照）、`OpenBulkWriterAsync`（原生批量装载通道，如无则用基类批量 INSERT）
+   - `ExplainAsync`、`CheckFunctionsAsync`（函数可用性检查）
+3. 实现 `IDdlGenerator`：`CreateTable / AlterTable / CreateIndex / …`（Canonical → 方言 DDL）
+4. 在 `TypeMapper` 注册双向类型映射；在 `FunctionTranslator` 注册方言输出
+5. 在 `DbCapabilities` 声明能力矩阵——计划器据此自动选择/降级策略（如不支持改列类型 → 引导重建表）
+6. 在 `ProviderRegistry` 注册工厂；前端 `ConnectionDialog` 增加类型选项
+7. 测试：单元（映射/翻译/DDL）+ Testcontainers 集成测试
+
+## 文档站（本站）
+
+- 框架 [Fumadocs](https://fumadocs.dev)（Next.js App Router），源文件 `docs/content/docs/**/*.mdx`
+- frontmatter：`title`（必填）/ `description` / `full`；侧边栏顺序由各目录 `meta.json` 控制
+- 图片放 `docs/public/images/`，正文用 `/images/xxx.png` 绝对路径引用
+- 内部链接用路由路径（如 `/docs/tutorial/data-sync`），支持 `createRelativeLink` 解析相对文件链接
+- 搜索：Orama 全文（`app/api/search/route.ts`）；LLM 友好输出：`/llms.txt`、`/llms-full.txt`、`/llms.mdx/docs/<path>`（可被 AI 工具直接订阅）
+
+## 版本发布
+
+- GitHub Actions：推送镜像（多架构）到 Docker Hub；`hejiale010426/ark:latest` 跟随 main
+- 后端目标框架 .NET 10，前端 React 19 / Next（文档站 16.x）；升级依赖时先跑全量测试

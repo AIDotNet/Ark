@@ -1,0 +1,51 @@
+---
+title: "Ark 文档中心"
+description: "多数据库管理与同步工具的用户教程、架构设计与 API 参考"
+full: true
+---
+
+Ark 是一个单机单用户的 Web 版多数据库管理与同步工具（布局参考 Navicat），支持 **PostgreSQL / MySQL / SQLite** 的连接管理、可视化操作，以及**同构 + 异构**的库级/表级同步（仅结构 或 结构+数据），含插件函数自动翻译与目标库扩展依赖检查。
+
+## 快速上手
+
+<Cards>
+  <Card title="快速开始" description="环境要求、开发与 Docker 两种启动方式、演示数据准备" href="/docs/getting-started" />
+  <Card title="数据同步" description="4 步向导、先对比再同步、行级 Diff、定时调度与断点续传" href="/docs/tutorial/data-sync" />
+  <Card title="FAQ 与已知边界" description="常见问题解答、v1 功能边界与故障排查" href="/docs/faq" />
+</Cards>
+
+## 图文教程
+
+全部教程基于真实运行截图（浅色主题，1440×900 @2x），演示环境是一个 SQLite 商城示例库（`data/demo/shop.db`）。
+
+<Cards>
+  <Card title="1 · 连接管理" description="新建/测试/编辑/删除连接，只读模式，密码存储" href="/docs/tutorial/connections" />
+  <Card title="2 · 对象浏览" description="连接树层级、右键菜单、多标签工作区" href="/docs/tutorial/object-browser" />
+  <Card title="3 · 数据网格" description="筛选/排序/分页、行内编辑变更集、无主键只读" href="/docs/tutorial/data-grid" />
+  <Card title="4 · 表结构设计器" description="可视化列编辑、DDL 预览、索引/外键查看" href="/docs/tutorial/table-designer" />
+  <Card title="5 · SQL 控制台" description="⌘↩ 执行、多结果集、历史收藏、AI 助手" href="/docs/tutorial/query-console" />
+  <Card title="6 · 数据同步" description="向导、对比、差异行查看、任务历史" href="/docs/tutorial/data-sync" />
+  <Card title="7 · 导入导出" description="CSV / JSON / SQL dump 流式导出，自动建表导入" href="/docs/tutorial/import-export" />
+  <Card title="8 · 快捷键与设置" description="全部快捷键、命令面板、AI 助手配置" href="/docs/tutorial/shortcuts-settings" />
+</Cards>
+
+## 深入了解
+
+<Cards>
+  <Card title="系统架构" description="前后端分层、Canonical 中间模型、关键设计决策" href="/docs/architecture" />
+  <Card title="同步引擎深入" description="类型映射矩阵、函数翻译语义、行级 Diff 算法" href="/docs/sync-internals" />
+  <Card title="API 参考" description="全部 REST 端点、统一响应包络、错误码表" href="/docs/api-reference" />
+  <Card title="生产部署" description="Docker 镜像、数据卷备份、升级注意事项" href="/docs/deployment" />
+  <Card title="开发指南" description="仓库结构、测试矩阵、新增数据库方言" href="/docs/development" />
+</Cards>
+
+## 30 秒了解 Ark 能做什么
+
+1. **管连接**：PostgreSQL / MySQL / SQLite 连接统一管理，密码加密存储，支持只读模式
+2. **看数据**：树形浏览库 → schema → 表/视图，双击即开数据网格，筛选/排序/行内编辑
+3. **改结构**：可视化表设计器，DDL 先预览再执行，跨方言类型映射与降级警告
+4. **写 SQL**：CodeMirror 控制台，⌘↩ 执行，多结果集、执行计划、历史收藏、AI 生成/解释/纠错
+5. **同步库**：向导式结构+数据同步（全量复制 / 行级 Diff），破坏性动作显式确认，支持定时调度与断点续传
+6. **导数据**：CSV / JSON / SQL dump 流式导出；CSV / JSON 导入，目标表不存在时自动推断建表
+
+<Callout>本站由 [Fumadocs](https://fumadocs.dev) 构建，源文件位于仓库 `docs/content/docs/`（MDX 格式），支持全文搜索与 LLM 友好的 Markdown 输出（`/llms.txt`）。</Callout>

@@ -1,0 +1,124 @@
+---
+title: "同步引擎深入"
+description: "类型映射矩阵、函数翻译语义、结构 Diff、全量复制与行级 Diff 算法、断点续传与调度"
+---
+
+本文面向想理解/扩展同步机制的开发者。用户视角的操作说明见[数据同步教程](/docs/tutorial/data-sync)。
+
+## 处理流水线
+
+```
+源库元数据 ──► TableConverter（类型映射 + 函数翻译）──► 结构 Diff / 目标建模
+                                                        │
+                          SyncPlanner（WHERE 试编译 · 依赖排序 · 依赖检查）
+                                                        │
+                                              ExecutionPlan（快照，可持久化）
+                                                        │
+                     SyncTaskManager（FK 分层并行 · 断点 · 取消 · 校验）
+                              │                        │
+                   DataTransferEngine(全量)    ChunkedDiffEngine(行级 Diff)
+```
+
+## 类型映射：以规范类型为中枢
+
+18 种规范类型（Canonical）作为中间表示，双向映射；**无法精确映射必须降级 + 警告，绝不静默失败**。核心实现：`backend/src/Ark.Core/Typing/TypeMapper.cs`。
+
+| 规范类型 | → PostgreSQL | → MySQL | → SQLite |
+|---|---|---|---|
+| Boolean | boolean | tinyint(1) ⚠ | INTEGER ⚠（0/1 存储） |
+| Int16 / Int32 / Int64 | smallint / integer / bigint | smallint / int / bigint | INTEGER |
+| Decimal | numeric(p,s) | decimal(p,s)（p>65 截 65、s>30 截 30） ⚠ | NUMERIC |
+| Float / Double | real / double precision | float / double | REAL / NUMERIC |
+| Char(n) | character(n) | char(n) | CHAR(n) ⚠（不强制长度） |
+| VarChar(n) | varchar(n)（无长度默认 255 ⚠） | varchar(n)（>16383 降级 text ⚠） | TEXT |
+| Text | text | longtext | TEXT |
+| Date / Time | date / time | date / time | TEXT |
+| DateTime | timestamp | datetime | TEXT |
+| DateTimeOffset | timestamptz | datetime ⚠（丢时区） | TEXT ⚠ |
+| Guid | uuid | char(36) | TEXT ⚠ |
+| Json | jsonb | json | TEXT ⚠ |
+| Binary(n) | bytea | varbinary(n) / longblob ⚠ | BLOB |
+| Xml | xml | longtext ⚠ | TEXT |
+
+读取方向（方言 → Canonical）的典型规则：
+
+- MySQL：`tinyint(1)`→Boolean（其他 tinyint→Int16）、`bit(1)`→Boolean、`year`→Int16、`enum/set`→VarChar(255)
+- PostgreSQL：数组→Json（降级）、`money`→Decimal(19,4)、`citext`→Text
+- SQLite：按类型亲和子串匹配（`Contains("INT")`→Int64 等）；无声明类型→Blob 亲和
+
+## 函数翻译：语义识别而非字符串替换
+
+默认值与生成列表达式先识别为 **9 种语义**（`ValueExprKind`），再按目标方言发射。识别覆盖跨方言的常见写法（`now()`、`getdate()` 风格、`datetime('now')`、`||` 拼接、`ifnull/nvl/coalesce` …）：
+
+| 语义 | → PostgreSQL | → MySQL | → SQLite |
+|---|---|---|---|
+| 当前时间戳 | `now()` | `CURRENT_TIMESTAMP` | `CURRENT_TIMESTAMP` |
+| 当前日期 / 时间 | `CURRENT_DATE` / `CURRENT_TIME` | 同左 | 同左 |
+| UUID | `gen_random_uuid()` | `UUID()` | ✗ error（无内置函数） |
+| 空值合并 | `COALESCE(a,b)` | `COALESCE(a,b)` | `COALESCE(a,b)` |
+| 拼接 | `a \|\| b` | `CONCAT(a,b)` | `a \|\| b` |
+| 字面量 | 原样 | 原样 | 原样 |
+| 无法识别 | 原样复制 + warning（人工确认） | 同左 | 同左 |
+
+配套的参数切分/括号感知解析器全部手写（`SplitTopLevelArgs`、`SplitTopLevelConcat` 等），正确处理嵌套括号与字符串引号。
+
+## 结构 Diff（StructureDiffer）
+
+- **列**：按名（忽略大小写）对齐 → Added / Altered / Dropped；比较维度：类型、可空、默认值、默认值语义、自增、生成列
+- **改名启发式**：删列+加列满足「位置相邻、类型一致、可空一致」且各 ≤3 时配对为 `RenameCandidate`（confidence: high/medium），以 hint 提示确认，避免误报 DROP+ADD
+- **索引/外键**：先按名对齐，再比对**定义指纹**（列序+唯一性+方法+部分索引谓词；FK 含 ON DELETE/UPDATE 归一）——同名异定义 → Drop+Create
+- **主键变更**：仅产生警告，需人工处理
+
+## 计划快照：预览即执行
+
+`SyncPlanner.BuildPlanAsync` 产出 `ExecutionPlan` 并被**原样持久化、原样执行**（零重规划），消除 TOCTOU：
+
+- 每条 DDL 动作带稳定 ID（`table:kind:sql` 内容派生）→ 支持用户勾选跳过、断点续传跳过已完成动作
+- 破坏性动作（DROP 等）显式标记，需 `confirmDestructive` 才执行
+- **计划期校验前移**：WHERE 片段真实试编译（15s 超时）、列映射存在性/冲突检查、PG 扩展依赖真实查询 `pg_extension`、脱敏主键冲突预警
+- 表按 FK 依赖 **Kahn 拓扑排序**（被引用表先建，循环依赖保持原序，视图垫底）；跨 schema 时自动插入 `SET search_path`
+
+## 全量复制（DataTransferEngine）
+
+1. **一致性快照**：PG `REPEATABLE READ READ ONLY` / MySQL `START TRANSACTION WITH CONSISTENT SNAPSHOT` / SQLite `BEGIN`
+2. **读写流水线**：keyset 分页读源（`WHERE pk > after ORDER BY pk LIMIT batch`），容量 2 的有界 Channel 让读写并发重叠
+3. **写通道**：PG **COPY**（text 格式，`\N`=NULL、`\x`=bytea）/ MySQL **LOAD DATA LOCAL**（失败自动降级多值 INSERT，2000→500 行/批）/ SQLite 单事务多值 INSERT（500 行/批）
+4. **会话调优**：写前 `synchronous_commit=off`、`FOREIGN_KEY_CHECKS=0`、`synchronous=OFF`，写后复位；MySQL 必须 `autocommit=1` 释放 MDL，避免后续 `ALTER TABLE … AUTO_INCREMENT` 死锁
+5. **收尾**：`SELECT MAX(pk)` 对齐自增（PG setval / MySQL ALTER / SQLite 天然对齐）；跳过生成列；脱敏在写路径执行（Diff 哈希仍用源值）
+
+## 行级 Diff（ChunkedDiffEngine）
+
+- **keyset merge-join**：以源端窗口（默认 2000 行）为基准，目标侧用 `pk > after AND pk <= upper` 范围谓词翻页；窗口内字典匹配（键 = 主键值规范化 `\x1F` 连接），无 OFFSET 全表扫描
+- **跨方言行哈希**：列名小写排序 + 值规范化（`s:` 前缀防碰撞、NULL 哨兵、UTC ISO 时间、decimal 去尾零、bool 归一、UUID 文本归一）→ SHA256；**按目标列的规范类型归一**，杜绝「每轮误更新」的永动 Diff
+- **窗口应用**：同一事务内 删除 → 插入 → 更新（先删后插防主键冲突）；`DeleteExtra=false` 时为 upsert-only 合并
+- 无主键表：整表单窗口按行哈希比对（与行序无关）
+- 对比模式（`apply:false`）：产出差异键清单（每类上限 `maxDiffKeys`，超出标 truncated）+ 每表 20 条样本，供前端差异行查看器分页回查
+
+## 任务执行与可恢复性
+
+- 全局并发 2 个任务；表按 FK 分层，层内 `maxParallelTables` 并行；单快照连接的源端读经信号量互斥
+- 进度：表级百分比 + 行级 `rowsDone/rowsTotal`；SSE 推送（700ms 状态哈希去重），断线降级轮询
+- **断点**：`{表, 最后主键, 已完成动作}` 随进度落库（2 秒节流）；取消在块/批边界生效
+- 重启后遗留 Running 任务自动置为 `Interrupted`；`resume` 从断点继续（跳过已完成表/动作），`retry` 从头
+- 终态：Completed / Failed / **PartiallyFailed**（部分表失败）
+- **同步后校验**：行数对比必做；Sample 模式追加首窗口行级 Diff 复检
+
+## 定时调度（SyncScheduler）
+
+- 后台服务每 30 秒扫描启用 cron 的 Profile
+- 自研 5 段 cron 解析（支持 `* , - /`；日/周同限按标准语义取「或」），**服务器本地时区**
+- 触发时重新生成计划快照再提交（`confirmDestructive=false`）；错过不补跑；同 Profile 上个任务未结束则跳过
+
+## 能力矩阵（DbCapabilities）
+
+| 能力 | PostgreSQL | MySQL | SQLite |
+|---|---|---|---|
+| 多 schema | ✔ | ✘ | ✘ |
+| 多数据库 | ✔ | ✔ | ✘ |
+| TRUNCATE | ✔ | ✔ | ✘（DELETE FROM 代替） |
+| 删除列 | ✔ | ✔ | ✔ |
+| 修改列类型 | ✔ | ✔ | ✘（提示重建表） |
+| 原生批量装载 | COPY | LOAD DATA | 批量 INSERT |
+| 一致性快照 | ✔ | ✔ | ✔ |
+
+新增数据库方言时按此表声明能力，计划器据此自动降级策略（详见[开发指南](/docs/development)）。

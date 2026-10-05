@@ -1,4 +1,7 @@
-# 快速开始
+---
+title: "快速开始"
+description: "环境要求、开发与 Docker 两种启动方式、演示数据准备"
+---
 
 ## 环境要求
 
@@ -26,7 +29,7 @@ pnpm install
 pnpm dev
 ```
 
-启动后打开 <http://localhost:5173> 即可使用。
+启动后打开 [http://localhost:5173](http://localhost:5173) 即可使用。
 
 > Ark 自身的数据（连接配置、同步任务与报告、AI 设置）存放在仓库根目录 `data/ark.db`（SQLite 单文件，首次启动自动建表）。删除该文件即重置所有配置。
 
@@ -90,10 +93,10 @@ SQL
 sqlite3 data/demo/shop_target.db "VACUUM;"   # 空库作为同步目标
 ```
 
-然后在界面左侧点 **＋新建连接**，类型选 SQLite，填入文件路径即可（见[连接管理教程](./tutorial/01-connection-management.md)）。
+然后在界面左侧点 **＋新建连接**，类型选 SQLite，填入文件路径即可（见[连接管理教程](/docs/tutorial/connections)）。
 
 ## 下一步
 
-- 不熟悉界面？从 [对象浏览](./tutorial/02-object-browser.md) 开始
-- 想同步两个库？直接看 [数据同步](./tutorial/06-data-sync.md)
-- 关心设计实现？看 [系统架构](./architecture.md)
+- 不熟悉界面？从 [对象浏览](/docs/tutorial/object-browser) 开始
+- 想同步两个库？直接看 [数据同步](/docs/tutorial/data-sync)
+- 关心设计实现？看 [系统架构](/docs/architecture)

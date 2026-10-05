@@ -1,10 +1,13 @@
-# 教程 7：导入导出
+---
+title: "导入导出"
+description: "CSV / JSON / SQL dump 导出，CSV / JSON 导入与自动建表"
+---
 
 右键任意表 → **导入 / 导出**，两个 Tab 分别对应导出与导入。标题显示当前表（如 `main.audit_log`）。
 
 ## 1. 导出：CSV / JSON / SQL dump
 
-![导出对话框](./images/17-export-dialog.png)
+![导出对话框](/images/17-export-dialog.png)
 
 | 格式 | 说明 |
 |---|---|
@@ -18,7 +21,7 @@
 
 ## 2. 导入：CSV / JSON
 
-![导入对话框](./images/18-import-dialog.png)
+![导入对话框](/images/18-import-dialog.png)
 
 1. 选择文件（`.csv` / `.json`）与格式（CSV 默认首行为表头；JSON 要求顶层数组、元素为对象）
 2. 点击 **开始导入**
@@ -30,7 +33,7 @@
 - 分批插入（默认 500 行/批，受方言参数上限约束），每批独立事务
 - PostgreSQL 目标自动带 `::type` 参数 cast
 
-![导入成功 toast](./images/28-import-success-toast.png)
+![导入成功 toast](/images/28-import-success-toast.png)
 
 成功后 toast 报告写入行数、是否自动建表与警告条数。
 
@@ -38,7 +41,7 @@
 
 | 场景 | 做法 |
 |---|---|
-| 把一张表搬去另一个库 | 直接用[数据同步](./06-data-sync.md)；或导出 SQL dump 后在目标端 SQL 控制台回放 |
+| 把一张表搬去另一个库 | 直接用[数据同步](/docs/tutorial/data-sync)；或导出 SQL dump 后在目标端 SQL 控制台回放 |
 | 给开发库造数据 | 生产表导出 CSV → 开发库建同名表 → 导入 |
 | Excel 数据入库 | Excel 另存 CSV → 对已有表导入（按表头列名映射）；或让 Ark 自动建表后再设计器里补主键/约束 |
 | 备份单表 | 导出 SQL dump（含建表语句，方言安全） |

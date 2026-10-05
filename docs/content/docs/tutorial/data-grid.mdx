@@ -1,10 +1,13 @@
-# 教程 3：数据网格
+---
+title: "数据网格"
+description: "筛选/排序/分页、行内编辑变更集、新增与删除行、无主键只读"
+---
 
 单击树中的表名即可打开数据网格。以 `orders` 表（15 行示例数据）为例。
 
 ## 1. 浏览与分页
 
-![数据网格](./images/06-data-grid.png)
+![数据网格](/images/06-data-grid.png)
 
 - 表头显示列名 + 类型（如 `status TEXT`），NULL 值以斜体灰 `NULL` 展示
 - 底部分页栏：总行数、每页行数（20/50/100/200/500）、首页/上一页/页码输入/下一页/末页
@@ -14,7 +17,7 @@
 
 ## 2. 筛选与排序
 
-![筛选 + 排序](./images/07-data-grid-filter-sort.png)
+![筛选 + 排序](/images/07-data-grid-filter-sort.png)
 
 **筛选**（网格顶部工具栏）：
 
@@ -28,7 +31,7 @@
 
 ## 3. 行内编辑（变更集模式）
 
-![编辑单元格](./images/08-data-grid-edit.png)
+![编辑单元格](/images/08-data-grid-edit.png)
 
 1. **双击单元格**进入编辑（图中第一行 status 已改为 `shipped`，黄色高亮标记）
 2. Enter 提交、Esc 取消；变更先记录在本地**变更集**，不会立即写库
@@ -40,7 +43,7 @@
 
 ## 4. 无主键表：自动只读
 
-![无主键只读](./images/09-data-grid-nopk-readonly.png)
+![无主键只读](/images/09-data-grid-nopk-readonly.png)
 
 无主键的表（如演示库的 `audit_log`）右上角显示「**无主键 · 只读**」Badge，编辑/新增/删除入口自动禁用——因为行无法唯一定位，乐观更新不安全。需要编辑请先在表设计器中补主键。
 
