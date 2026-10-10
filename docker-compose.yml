@@ -1,4 +1,4 @@
-# Ark 生产部署：前后端合一镜像（GitHub Actions 多架构推送）
+# Ark 生产部署：主应用前后端合一镜像 + 文档站独立镜像（GitHub Actions 多架构推送）
 # 启动: docker compose up -d    （数据持久化在命名卷 ark_data，含 ark.db 与 DataProtection 密钥）
 services:
   ark:
@@ -9,6 +9,14 @@ services:
       - "8080:8080"
     volumes:
       - ark_data:/data
+
+  # 文档站（Next.js standalone），独立构建推送，不需要可整段删除
+  docs:
+    image: hejiale010426/ark-docs:latest
+    container_name: ark-docs
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
 
 volumes:
   ark_data:

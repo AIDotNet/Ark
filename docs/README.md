@@ -10,6 +10,8 @@ npm run dev        # http://localhost:3000
 npm run build && npm start
 ```
 
+Docker 独立镜像：`docker build -t ark-docs:local .`（详见 [deployment 文档](/docs/deployment)）
+
 ## 写文档
 
 - 内容：`content/docs/**/*.mdx`，frontmatter 支持 `title`（必填）/ `description` / `full` / `icon`

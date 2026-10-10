@@ -13,6 +13,14 @@ docker pull hejiale010426/ark:latest
 
 镜像为**前后端合一**：多阶段构建（node 构建前端 → sdk:10 发布 → aspnet:10 运行），前端静态资源被拷入 `wwwroot` 由后端直接托管，单端口暴露。
 
+文档站是**独立镜像**，与主镜像分开构建推送：
+
+```bash
+docker pull hejiale010426/ark-docs:latest
+```
+
+多阶段构建（node:22-alpine `npm ci` → `next build` standalone → 最小运行镜像），无状态、不挂数据卷。
+
 ## docker-compose（推荐）
 
 仓库根的 `docker-compose.yml` 即生产编排：
@@ -28,13 +36,21 @@ services:
     volumes:
       - ark_data:/data
 
+  # 文档站（不需要可整段删除）
+  docs:
+    image: hejiale010426/ark-docs:latest
+    container_name: ark-docs
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+
 volumes:
   ark_data:
 ```
 
 ```bash
 docker compose up -d
-# 访问 http://<host>:8080
+# 访问 http://<host>:8080（主应用）、http://<host>:3000（文档站）
 ```
 
 ## 数据卷：/data 里有什么
@@ -89,8 +105,13 @@ docker compose pull && docker compose up -d
 ## 从源码构建镜像
 
 ```bash
+# 主应用（构建上下文为仓库根目录）
 docker build -t ark:local -f backend/Dockerfile .
 docker run -p 8080:8080 -v ark_data:/data ark:local
+
+# 文档站（构建上下文为 docs/ 目录）
+docker build -t ark-docs:local docs/
+docker run -p 3000:3000 ark-docs:local
 ```
 
-构建过程自动完成前端 `pnpm build` 与后端 `dotnet publish`，无需本地安装 .NET/Node。
+构建过程自动完成前端 `pnpm build`、文档站 `next build` 与后端 `dotnet publish`，无需本地安装 .NET/Node。
