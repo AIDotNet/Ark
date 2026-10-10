@@ -60,11 +60,16 @@ export function useTaskSse(taskId: string | null | undefined) {
 
 const TERMINAL: SyncTaskStatus[] = ["Completed", "Failed", "Cancelled", "PartiallyFailed", "Interrupted"]
 
-/** 运行详情：进度 / 日志 / 报告（SSE 驱动）。 */
-export function TaskRunView({ taskId }: { taskId: string }) {
+/** 运行详情：进度 / 日志 / 报告（SSE 驱动）。onRunningChange 向宿主（如向导弹窗）同步运行态。 */
+export function TaskRunView({ taskId, onRunningChange }: { taskId: string; onRunningChange?: (running: boolean) => void }) {
   const task = useTaskSse(taskId)
   const logRef = useRef<HTMLDivElement>(null)
   const qc = useQueryClient()
+
+  const running = !!task && (task.status === "Running" || task.status === "Queued" || task.status === "CancelRequested")
+  useEffect(() => {
+    onRunningChange?.(running)
+  }, [running, onRunningChange])
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
@@ -78,8 +83,6 @@ export function TaskRunView({ taskId }: { taskId: string }) {
       </div>
     )
   }
-
-  const running = task.status === "Running" || task.status === "Queued" || task.status === "CancelRequested"
 
   async function act(fn: () => Promise<unknown>, msg: string) {
     try {

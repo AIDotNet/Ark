@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { AnimatePresence, motion } from "motion/react"
-import { ArrowRight, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
+import { ArrowRight, Check, ChevronDown, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -75,6 +85,38 @@ const initialDraft: Draft = {
   compareFirst: false,
 }
 
+/** 由已保存的 Profile 配置还原表单草稿（编辑模式打开时使用）。 */
+function draftFromConfig(c: SyncPlanRequest): Partial<Draft> {
+  return {
+    srcConn: c.sourceConnectionId,
+    srcDb: c.sourceDatabase,
+    tgtConn: c.targetConnectionId,
+    tgtDb: c.targetDatabase,
+    tgtSchema: c.targetSchema ?? "",
+    mode: c.mode,
+    dataMethod: c.dataMethod,
+    conflictMode: c.conflictMode,
+    deleteExtraRows: c.deleteExtraRows,
+    dropExtraTables: c.dropExtraTables,
+    alignAutoIncrement: c.alignAutoIncrement,
+    deferIndexes: c.deferIndexes,
+    verifyMode: c.verifyMode,
+    batchSize: String(c.batchSize),
+    chunkRows: String(c.chunkRows),
+    maxParallelTables: String(c.maxParallelTables),
+  }
+}
+
+/** 高级参数是否偏离默认值（偏离时自动展开高级选项区）。 */
+function hasAdvanced(d: Partial<Draft>): boolean {
+  return (
+    d.batchSize !== initialDraft.batchSize ||
+    d.chunkRows !== initialDraft.chunkRows ||
+    d.maxParallelTables !== initialDraft.maxParallelTables ||
+    !!d.deferIndexes
+  )
+}
+
 /** 新建/快速同步向导（4 步），支持“先对比”模式。 */
 export function NewSyncFlow({
   open,
@@ -97,26 +139,7 @@ export function NewSyncFlow({
   }
   const [d, setD] = useState<Draft>(() => ({
     ...initialDraft,
-    ...(initial?.config
-      ? {
-          srcConn: initial.config.sourceConnectionId,
-          srcDb: initial.config.sourceDatabase,
-          tgtConn: initial.config.targetConnectionId,
-          tgtDb: initial.config.targetDatabase,
-          tgtSchema: initial.config.targetSchema ?? "",
-          mode: initial.config.mode,
-          dataMethod: initial.config.dataMethod,
-          conflictMode: initial.config.conflictMode,
-          deleteExtraRows: initial.config.deleteExtraRows,
-          dropExtraTables: initial.config.dropExtraTables,
-          alignAutoIncrement: initial.config.alignAutoIncrement,
-          deferIndexes: initial.config.deferIndexes,
-          verifyMode: initial.config.verifyMode,
-          batchSize: String(initial.config.batchSize),
-          chunkRows: String(initial.config.chunkRows),
-          maxParallelTables: String(initial.config.maxParallelTables),
-        }
-      : {}),
+    ...(initial?.config ? draftFromConfig(initial.config) : {}),
   }))
   const [selectedTables, setSelectedTables] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState("")
@@ -130,13 +153,41 @@ export function NewSyncFlow({
   const [profileName, setProfileName] = useState(initial?.name ?? "")
   const [cron, setCron] = useState<string | null>(initial?.cron ?? null)
   const [cronEnabled, setCronEnabled] = useState(initial?.scheduleEnabled ?? false)
+  const [showAdvanced, setShowAdvanced] = useState(() => hasAdvanced(initial?.config ? draftFromConfig(initial.config) : {}))
+  const [taskRunning, setTaskRunning] = useState(false)
+  const [confirmClose, setConfirmClose] = useState(false)
+  const isEditing = !!initial?.profileId
 
   const patch = (p: Partial<Draft>) => setD((s) => ({ ...s, ...p }))
+
+  // 打开时按场景恢复默认：编辑模式以 Profile 为准并默认保存；新建模式清掉上次的保存选项
+  useEffect(() => {
+    if (!open) return
+    setTaskRunning(false)
+    setConfirmClose(false)
+    setShowAdvanced(hasAdvanced(initial?.config ? draftFromConfig(initial.config) : {}))
+    if (isEditing && initial?.config) {
+      // 修复：换一个 Profile 编辑时，表单必须以该 Profile 为准（此前草稿会残留上一次的值）
+      setD({ ...initialDraft, ...draftFromConfig(initial.config), compareFirst: false })
+      setProfileName(initial.name ?? "")
+      setCron(initial.cron ?? null)
+      setCronEnabled(initial.scheduleEnabled ?? false)
+      setSaveProfile(true)
+    } else {
+      setSaveProfile(false)
+      setProfileName("")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initial?.profileId])
 
   const tabs = useWorkspace((s) => s.tabs)
   const connections = useQuery({ queryKey: ["connections"], queryFn: () => api.listConnections() })
   // 默认带出当前活动连接
   const connById = (id: string) => connections.data?.find((c) => c.id === id)
+  const connLabel = (id: string, db: string) => {
+    const c = connById(id)
+    return `${c ? `${c.name}（${c.dialect}）` : id.slice(0, 8)} · ${db}`
+  }
 
   // 默认带出当前活动连接（仅新建流程、未选过连接时）
   const active = tabs.find((t) => t.connectionId !== "" && t.kind !== "sync")
@@ -213,6 +264,7 @@ export function NewSyncFlow({
       const res = await api.buildSyncPlan(buildRequest(currentSelections()))
       setPlan(res)
       setSkipped(new Set(res.tables.flatMap((t) => t.structureActions.filter((a) => a.isDestructive).map((a) => a.id))))
+      setConfirmDestructive(false)
       go(2)
     } catch (e) {
       toast.error((e as Error).message)
@@ -228,6 +280,7 @@ export function NewSyncFlow({
       const res = await api.compareToPlan(compareTaskId)
       setPlan(res)
       setSkipped(new Set(res.tables.flatMap((t) => t.structureActions.filter((a) => a.isDestructive).map((a) => a.id))))
+      setConfirmDestructive(false)
     } catch (e) {
       toast.error((e as Error).message)
     } finally {
@@ -237,6 +290,7 @@ export function NewSyncFlow({
 
   async function submit() {
     if (!plan) return
+    if (saveProfile && !profileName.trim()) return toast.error("请填写 Profile 名称")
     setBusy(true)
     try {
       const res = await api.submitSyncTask({ plan, skipActionIds: [...skipped], confirmDestructive })
@@ -252,7 +306,6 @@ export function NewSyncFlow({
           }
           if (initial?.profileId) await api.updateSyncProfile(initial.profileId, body)
           else await api.createSyncProfile(body)
-          onSaved?.()
         } catch (e) {
           toast.error(`保存 Profile 失败: ${(e as Error).message}`)
         }
@@ -272,268 +325,398 @@ export function NewSyncFlow({
     setCompareTaskId(null)
     setSelectedTables(new Set())
     setConfirmDestructive(false)
+    setSearch("")
+    setTaskRunning(false)
+    setConfirmClose(false)
   }
 
-  const tablesFiltered = srcTables.data?.filter((t) => t.name.includes(search)) ?? []
+  /** 关闭请求统一入口：任务运行中先拦截确认，其余直接关闭并复位 */
+  function requestClose() {
+    if (step === 3 && taskRunning) {
+      setConfirmClose(true)
+      return
+    }
+    onOpenChange(false)
+    reset()
+  }
+
+  const tablesFiltered = (srcTables.data ?? []).filter((t) => t.name.toLowerCase().includes(search.toLowerCase()))
   const sameDb = d.srcConn === d.tgtConn && d.srcDb === d.tgtDb && d.srcConn !== ""
 
+  // 计划中的破坏性动作：未跳过的部分需要显式确认后才允许提交（与后端“未确认即跳过”的语义对齐）
+  const planDestructive = plan ? plan.tables.flatMap((t) => t.structureActions.filter((a) => a.isDestructive)) : []
+  const pendingDestructive = planDestructive.filter((a) => !skipped.has(a.id))
+  const destructiveBlocked = pendingDestructive.length > 0 && !confirmDestructive
+  const step1Destructive = d.conflictMode === "Truncate" || d.dropExtraTables
+  const estRowsTotal = plan?.tables.reduce((s, t) => s + (t.data?.estimatedRows ?? 0), 0) ?? 0
+  const hasEstRows = plan?.tables.some((t) => t.data?.estimatedRows != null) ?? false
+  const canNext0 = !!d.srcConn && !!d.srcDb && !!d.tgtConn && !!d.tgtDb && !sameDb
+
   return (
-    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) reset() }}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden">
-        <DialogHeader>
-          <DialogTitle>{initial?.profileId ? "编辑同步配置" : "新建同步"}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={(v) => { if (!v) requestClose() }}>
+        <DialogContent className="flex max-h-[92vh] max-w-3xl flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{isEditing ? "编辑同步配置" : "新建同步"}</DialogTitle>
+            <DialogDescription>
+              {isEditing
+                ? "调整配置后可保存到当前同步配置，并立即执行一次。"
+                : "配置源与目标，选择同步范围，审阅变更后执行。"}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="flex items-center gap-1 text-xs">
-          {STEP_TITLES.map((t, i) => (
-            <div key={t} className="flex items-center gap-1">
-              <span
-                className={`relative rounded-full px-2 py-0.5 transition-colors duration-200 ${
-                  i === step
-                    ? "text-primary-foreground"
-                    : i < step
-                      ? "bg-accent text-accent-foreground"
-                      : "text-muted-foreground"
-                }`}
-              >
-                {/* layoutId 胶囊：active 背景在步骤间平滑滑动 */}
-                {i === step && (
-                  <motion.span
-                    layoutId="sync-step-pill"
-                    className="absolute inset-0 rounded-full bg-primary"
-                    transition={springSoft}
-                  />
-                )}
-                <span className="relative z-10">
-                  {i + 1}. {t}
-                </span>
-              </span>
-              {i < STEP_TITLES.length - 1 && <ArrowRight className="size-3 text-muted-foreground" />}
-            </div>
-          ))}
-        </div>
-
-        <ScrollArea className="max-h-[62vh] pr-2">
-          {/* mode="wait"：旧步骤先滑出，新步骤再滑入，方向由 go() 决定 */}
-          <AnimatePresence mode="wait" custom={stepDir} initial={false}>
-            <motion.div
-              key={step}
-              custom={stepDir}
-              variants={stepVariants}
-              initial="enter"
-              animate="center"
-              exit="exit"
-              transition={stepTransition}
-              className="space-y-4"
-            >
-            {/* Step 0：源与目标 */}
-            {step === 0 && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <ConnDbPicker
-                    title="源数据库"
-                    connections={connections.data}
-                    connId={d.srcConn}
-                    db={d.srcDb}
-                    onConn={(v) => patch({ srcConn: v, srcDb: "" })}
-                    onDb={(v) => patch({ srcDb: v })}
-                  />
-                  <ConnDbPicker
-                    title="目标数据库"
-                    connections={connections.data}
-                    connId={d.tgtConn}
-                    db={d.tgtDb}
-                    onConn={(v) => patch({ tgtConn: v, tgtDb: "" })}
-                    onDb={(v) => patch({ tgtDb: v })}
-                  />
-                </div>
-                {connById(d.tgtConn)?.dialect === "PostgreSQL" && (
-                  <div className="flex items-center gap-3 rounded-lg border p-3">
-                    <Label className="text-xs whitespace-nowrap">目标 Schema</Label>
-                    <Input
-                      className="h-8 w-44"
-                      placeholder="public"
-                      value={d.tgtSchema}
-                      onChange={(e) => patch({ tgtSchema: e.target.value })}
+          {/* 步骤条：已完成的步骤可点击回跳 */}
+          <div className="flex items-center gap-1 text-xs">
+            {STEP_TITLES.map((t, i) => (
+              <div key={t} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={i >= step}
+                  onClick={() => go(i as Step)}
+                  title={i < step ? `返回「${t}」` : undefined}
+                  className={`relative rounded-full px-2 py-0.5 outline-none transition-colors duration-200 focus-visible:ring-2 focus-visible:ring-ring ${
+                    i === step
+                      ? "text-primary-foreground"
+                      : i < step
+                        ? "bg-accent text-accent-foreground hover:bg-accent/70"
+                        : "text-muted-foreground"
+                  } disabled:cursor-default`}
+                >
+                  {/* layoutId 胶囊：active 背景在步骤间平滑滑动 */}
+                  {i === step && (
+                    <motion.span
+                      layoutId="sync-step-pill"
+                      className="absolute inset-0 rounded-full bg-primary"
+                      transition={springSoft}
                     />
-                    <span className="text-[11px] text-muted-foreground">跨方言同步到 PostgreSQL 时指定目标 schema（默认 public）</span>
+                  )}
+                  <span className="relative z-10 flex items-center gap-1">
+                    {i < step && <Check className="size-3" />}
+                    {i + 1}. {t}
+                  </span>
+                </button>
+                {i < STEP_TITLES.length - 1 && <ArrowRight className="size-3 text-muted-foreground" />}
+              </div>
+            ))}
+          </div>
+
+          <ScrollArea className="min-h-0 flex-1 pr-2">
+            {/* mode="wait"：旧步骤先滑出，新步骤再滑入，方向由 go() 决定 */}
+            <AnimatePresence mode="wait" custom={stepDir} initial={false}>
+              <motion.div
+                key={step}
+                custom={stepDir}
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={stepTransition}
+                className="space-y-4 pb-1"
+              >
+              {/* Step 0：源与目标 */}
+              {step === 0 && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <ConnDbPicker
+                      title="源数据库"
+                      connections={connections.data}
+                      connId={d.srcConn}
+                      db={d.srcDb}
+                      onConn={(v) => patch({ srcConn: v, srcDb: "" })}
+                      onDb={(v) => patch({ srcDb: v })}
+                    />
+                    <ConnDbPicker
+                      title="目标数据库"
+                      connections={connections.data}
+                      connId={d.tgtConn}
+                      db={d.tgtDb}
+                      onConn={(v) => patch({ tgtConn: v, tgtDb: "" })}
+                      onDb={(v) => patch({ tgtDb: v })}
+                    />
                   </div>
-                )}
-                {sameDb && (
-                  <Alert variant="destructive">
-                    <CircleAlert /> <AlertTitle>源库与目标库相同</AlertTitle>
-                  </Alert>
-                )}
-                <div className="flex justify-end">
-                  <Button
-                    disabled={!d.srcConn || !d.srcDb || !d.tgtConn || !d.tgtDb || sameDb}
-                    onClick={() => go(1)}
-                  >
-                    下一步
-                  </Button>
-                </div>
-              </>
-            )}
-
-            {/* Step 1：范围与选项 */}
-            {step === 1 && (
-              <>
-                <div className="rounded-lg border p-3">
-                  <div className="mb-2 text-sm font-medium">同步模式</div>
-                  <RadioGroup
-                    value={d.mode}
-                    onValueChange={(v) => patch({ mode: v as SyncMode })}
-                    className="grid grid-cols-2 gap-2"
-                  >
-                    <ModeOption value="StructureOnly" checked={d.mode === "StructureOnly"} title="仅结构" desc="类型映射 + 函数翻译" />
-                    <ModeOption value="StructureAndData" checked={d.mode === "StructureAndData"} title="结构 + 数据" desc="同步结构并复制数据" />
-                  </RadioGroup>
-
-                  {d.mode === "StructureAndData" && (
-                    <div className="mt-3 flex animate-in flex-wrap items-center gap-3 fade-in slide-in-from-top-1 duration-200">
-                      <Label className="text-xs">数据方式</Label>
-                      <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
-                        <SelectTrigger className="w-44" size="sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="FullCopy">全量复制</SelectItem>
-                          <SelectItem value="RowDiff">行级 Diff（分块）</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Select value={d.conflictMode} onValueChange={(v) => patch({ conflictMode: v as ConflictMode })}>
-                        <SelectTrigger className="w-52" size="sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Error">冲突时报错</SelectItem>
-                          <SelectItem value="Truncate">复制前清空目标表</SelectItem>
-                          <SelectItem value="SkipExisting">跳过已存在（需主键）</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {d.dataMethod === "RowDiff" && (
-                        <OptSwitch label="删除目标多余行" checked={d.deleteExtraRows} onChange={(v) => patch({ deleteExtraRows: v })} />
-                      )}
-                      <OptSwitch label="对齐自增/序列" checked={d.alignAutoIncrement} onChange={(v) => patch({ alignAutoIncrement: v })} />
-                      <OptSwitch label="大表：索引后建" checked={d.deferIndexes} onChange={(v) => patch({ deferIndexes: v })} />
+                  {connById(d.tgtConn)?.dialect === "PostgreSQL" && (
+                    <div className="flex items-center gap-3 rounded-lg border p-3">
+                      <Label className="text-xs whitespace-nowrap">目标 Schema</Label>
+                      <Input
+                        className="h-8 w-44"
+                        placeholder="public"
+                        value={d.tgtSchema}
+                        onChange={(e) => patch({ tgtSchema: e.target.value })}
+                      />
+                      <span className="text-[11px] text-muted-foreground">跨方言同步到 PostgreSQL 时指定目标 schema（默认 public）</span>
                     </div>
                   )}
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <OptSwitch label="删除目标端多余表" checked={d.dropExtraTables} onChange={(v) => patch({ dropExtraTables: v })} />
-                    <Label className="text-xs">校验</Label>
-                    <Select value={d.verifyMode} onValueChange={(v) => patch({ verifyMode: v as VerifyMode })}>
-                      <SelectTrigger className="w-36" size="sm"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="Off">关闭</SelectItem>
-                        <SelectItem value="Sample">行数+抽样</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Label className="text-xs">批次</Label>
-                    <Input className="h-8 w-20" value={d.batchSize} onChange={(e) => patch({ batchSize: e.target.value.replace(/\D/g, "") })} />
-                    <Label className="text-xs">分块</Label>
-                    <Input className="h-8 w-20" value={d.chunkRows} onChange={(e) => patch({ chunkRows: e.target.value.replace(/\D/g, "") })} />
-                    <Label className="text-xs">并行表数</Label>
-                    <Input className="h-8 w-16" value={d.maxParallelTables} onChange={(e) => patch({ maxParallelTables: e.target.value.replace(/\D/g, "") })} />
-                  </div>
-                </div>
-
-                <TablePicker
-                  tables={tablesFiltered}
-                  loading={srcTables.isLoading}
-                  error={srcTables.error?.message}
-                  selected={selectedTables}
-                  search={search}
-                  onSearch={setSearch}
-                  onToggle={(t) =>
-                    setSelectedTables((s) => {
-                      const n = new Set(s)
-                      if (n.has(t)) n.delete(t)
-                      else n.add(t)
-                      return n
-                    })
-                  }
-                  onSelectAll={() => setSelectedTables(new Set(srcTables.data?.filter((t) => t.kind === "table").map((t) => t.name) ?? []))}
-                  onClear={() => setSelectedTables(new Set())}
-                />
-
-                <div className="flex items-center justify-between">
-                  <Button variant="outline" onClick={() => go(0)}>上一步</Button>
-                  <div className="flex items-center gap-2">
-                    <OptSwitch label="先对比再同步" checked={d.compareFirst} onChange={(v) => patch({ compareFirst: v })} />
-                    {d.compareFirst ? (
-                      <Button onClick={runCompare} disabled={busy || selectedTables.size === 0}>
-                        {busy ? <Loader2 className="animate-spin" /> : <GitCompareArrows />} 开始对比
-                      </Button>
-                    ) : (
-                      <Button onClick={buildPlan} disabled={busy || selectedTables.size === 0}>
-                        {busy ? <Loader2 className="animate-spin" /> : <Play />} 生成同步计划
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Step 2：审阅（对比结果 或 计划预览） */}
-            {step === 2 && (
-              <>
-                {d.compareFirst && !plan && compareTaskId && (
-                  <>
-                    <CompareResultView taskId={compareTaskId} onOpenTable={() => {}} />
-                    <div className="flex items-center justify-between">
-                      <Button variant="outline" onClick={() => go(1)}>上一步</Button>
-                      <Button onClick={generatePlanFromCompare} disabled={busy}>
-                        {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} 由对比结果生成同步计划
-                      </Button>
-                    </div>
-                  </>
-                )}
-                {plan && (
-                  <>
-                    <Alert>
-                      <AlertTitle>
-                        {plan.tables.length} 张表 · 快照 {plan.id.slice(0, 8)}（执行时使用此快照，不重新规划）
-                      </AlertTitle>
+                  {sameDb && (
+                    <Alert variant="destructive">
+                      <CircleAlert />
+                      <AlertTitle>源库与目标库相同</AlertTitle>
+                      <AlertDescription className="text-xs">请为目标选择另一个数据库，否则数据会被原地覆盖。</AlertDescription>
                     </Alert>
-                    <PlanReview plan={plan} skipped={skipped} onToggle={(id, on) =>
-                      setSkipped((s) => {
-                        const n = new Set(s)
-                        if (on) n.delete(id)
-                        else n.add(id)
-                        return n
-                      })
-                    } />
-                    <div className="rounded-lg border p-3">
-                      <OptSwitch label="保存为同步配置（Profile）" checked={saveProfile} onChange={setSaveProfile} />
-                      <Collapse open={saveProfile}>
-                        <div className="mt-2 space-y-3">
-                          <Input
-                            placeholder="Profile 名称"
-                            value={profileName}
-                            onChange={(e) => setProfileName(e.target.value)}
-                          />
-                          <CronField cron={cron} enabled={cronEnabled} onChange={(c, e) => { setCron(c); setCronEnabled(e) }} />
+                  )}
+                </>
+              )}
+
+              {/* Step 1：范围与选项 */}
+              {step === 1 && (
+                <>
+                  <div className="rounded-lg border p-3">
+                    <div className="mb-2 text-sm font-medium">同步模式</div>
+                    <RadioGroup
+                      value={d.mode}
+                      onValueChange={(v) => patch({ mode: v as SyncMode })}
+                      className="grid grid-cols-2 gap-2"
+                    >
+                      <ModeOption value="StructureOnly" checked={d.mode === "StructureOnly"} title="仅结构" desc="类型映射 + 函数翻译" />
+                      <ModeOption value="StructureAndData" checked={d.mode === "StructureAndData"} title="结构 + 数据" desc="同步结构并复制数据" />
+                    </RadioGroup>
+
+                    {d.mode === "StructureAndData" && (
+                      <div className="mt-3 flex animate-in flex-wrap items-center gap-3 fade-in slide-in-from-top-1 duration-200">
+                        <Label className="text-xs">数据方式</Label>
+                        <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
+                          <SelectTrigger className="w-44" size="sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="FullCopy">全量复制</SelectItem>
+                            <SelectItem value="RowDiff">行级 Diff（分块）</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Select value={d.conflictMode} onValueChange={(v) => patch({ conflictMode: v as ConflictMode })}>
+                          <SelectTrigger className="w-52" size="sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Error">冲突时报错</SelectItem>
+                            <SelectItem value="Truncate">复制前清空目标表</SelectItem>
+                            <SelectItem value="SkipExisting">跳过已存在（需主键）</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {d.dataMethod === "RowDiff" && (
+                          <OptSwitch label="删除目标多余行" checked={d.deleteExtraRows} onChange={(v) => patch({ deleteExtraRows: v })} />
+                        )}
+                        <OptSwitch label="对齐自增/序列" checked={d.alignAutoIncrement} onChange={(v) => patch({ alignAutoIncrement: v })} />
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                      <OptSwitch label="删除目标端多余表" checked={d.dropExtraTables} onChange={(v) => patch({ dropExtraTables: v })} />
+                      <Label className="text-xs">校验</Label>
+                      <Select value={d.verifyMode} onValueChange={(v) => patch({ verifyMode: v as VerifyMode })}>
+                        <SelectTrigger className="w-36" size="sm"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Off">关闭</SelectItem>
+                          <SelectItem value="Sample">行数+抽样</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* 高级参数：默认折叠，偏离默认值时自动展开 */}
+                    <div className="mt-3 border-t pt-2">
+                      <button
+                        type="button"
+                        onClick={() => setShowAdvanced((v) => !v)}
+                        className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                      >
+                        <ChevronDown className={`size-3.5 transition-transform duration-200 ${showAdvanced ? "" : "-rotate-90"}`} />
+                        高级选项
+                        {!showAdvanced && <span className="font-normal">（批次 / 分块 / 并行 / 索引后建）</span>}
+                      </button>
+                      <Collapse open={showAdvanced}>
+                        <div className="mt-3 flex flex-wrap items-center gap-3">
+                          <OptSwitch label="大表：索引后建" checked={d.deferIndexes} onChange={(v) => patch({ deferIndexes: v })} />
+                          <Label className="text-xs">批次</Label>
+                          <Input className="h-8 w-20" inputMode="numeric" value={d.batchSize} onChange={(e) => patch({ batchSize: e.target.value.replace(/\D/g, "") })} />
+                          <Label className="text-xs">分块</Label>
+                          <Input className="h-8 w-20" inputMode="numeric" value={d.chunkRows} onChange={(e) => patch({ chunkRows: e.target.value.replace(/\D/g, "") })} />
+                          <Label className="text-xs">并行表数</Label>
+                          <Input className="h-8 w-16" inputMode="numeric" value={d.maxParallelTables} onChange={(e) => patch({ maxParallelTables: e.target.value.replace(/\D/g, "") })} />
                         </div>
                       </Collapse>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <Button variant="outline" onClick={() => go(1)}>上一步</Button>
-                      <div className="flex items-center gap-3">
-                        <OptSwitch label="确认执行破坏性动作（DROP 等）" checked={confirmDestructive} onChange={setConfirmDestructive} />
-                        <Button onClick={submit} disabled={busy}>
-                          {busy ? <Loader2 className="animate-spin" /> : <Play />} 提交执行
-                        </Button>
-                      </div>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
+                  </div>
 
-            {/* Step 3：执行 */}
-            {step === 3 && taskId && <TaskRunView taskId={taskId} />}
-            {step === 2 && d.compareFirst && compareTaskId && !plan && null}
-            </motion.div>
-          </AnimatePresence>
-        </ScrollArea>
-      </DialogContent>
-    </Dialog>
+                  {step1Destructive && (
+                    <Alert variant="warning">
+                      <TriangleAlert />
+                      <AlertDescription className="text-xs">
+                        当前配置包含破坏性操作：
+                        {d.conflictMode === "Truncate" && "复制前清空目标表"}
+                        {d.conflictMode === "Truncate" && d.dropExtraTables && "、"}
+                        {d.dropExtraTables && "删除目标端多余表"}
+                        。生成计划后会在审阅步骤要求二次确认。
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  <TablePicker
+                    tables={tablesFiltered}
+                    total={(srcTables.data ?? []).length}
+                    loading={srcTables.isLoading}
+                    error={srcTables.error?.message}
+                    selected={selectedTables}
+                    search={search}
+                    onSearch={setSearch}
+                    onToggle={(t) =>
+                      setSelectedTables((s) => {
+                        const n = new Set(s)
+                        if (n.has(t)) n.delete(t)
+                        else n.add(t)
+                        return n
+                      })
+                    }
+                    onSelectAll={() => setSelectedTables(new Set(srcTables.data?.filter((t) => t.kind === "table").map((t) => t.name) ?? []))}
+                    onClear={() => setSelectedTables(new Set())}
+                  />
+                </>
+              )}
+
+              {/* Step 2：审阅（对比结果 或 计划预览） */}
+              {step === 2 && (
+                <>
+                  {d.compareFirst && !plan && compareTaskId && (
+                    <CompareResultView taskId={compareTaskId} />
+                  )}
+                  {plan && (
+                    <>
+                      {/* 计划摘要：源 → 目标 / 表数 / 预计行数 / 破坏性动作数 */}
+                      <div className="rounded-lg border p-3">
+                        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
+                          <GitCompareArrows className="size-4 text-muted-foreground" />
+                          <span className="font-mono text-xs">
+                            {connLabel(d.srcConn, d.srcDb)} → {connLabel(d.tgtConn, d.tgtDb)}
+                          </span>
+                          <Badge variant="secondary">{plan.tables.length} 张表</Badge>
+                          {hasEstRows && <Badge variant="outline" className="text-[10px]">预计 ≈{estRowsTotal} 行</Badge>}
+                          {planDestructive.length > 0 && (
+                            <Badge variant="destructive" className="text-[10px]">破坏性 {planDestructive.length}</Badge>
+                          )}
+                          {plan.options.conflictMode === "Truncate" && (
+                            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">先清空目标表</Badge>
+                          )}
+                        </div>
+                        <div className="mt-1 text-[11px] text-muted-foreground">
+                          快照 {plan.id.slice(0, 8)} · 执行时使用此快照，不重新规划 · {plan.options.mode === "StructureOnly" ? "仅结构" : "结构 + 数据"}
+                        </div>
+                      </div>
+
+                      {pendingDestructive.length > 0 && (
+                        <Alert variant="warning">
+                          <TriangleAlert />
+                          <AlertTitle>{pendingDestructive.length} 个破坏性动作待确认</AlertTitle>
+                          <AlertDescription>
+                            <div className="text-xs">
+                              包含 DROP / 清空等不可逆操作。未确认的破坏性动作执行时将被自动跳过；也可以在下方列表中取消勾选以显式跳过。
+                            </div>
+                            <label className="mt-1.5 flex items-center gap-2 text-xs font-medium text-amber-800 dark:text-amber-300">
+                              <Switch checked={confirmDestructive} onCheckedChange={setConfirmDestructive} />
+                              我已了解风险，确认执行破坏性动作
+                            </label>
+                          </AlertDescription>
+                        </Alert>
+                      )}
+
+                      <PlanReview plan={plan} skipped={skipped} onToggle={(id, on) =>
+                        setSkipped((s) => {
+                          const n = new Set(s)
+                          if (on) n.delete(id)
+                          else n.add(id)
+                          return n
+                        })
+                      } />
+                      <div className="rounded-lg border p-3">
+                        <OptSwitch
+                          label={isEditing ? "保存修改到当前同步配置" : "保存为同步配置（Profile）"}
+                          checked={saveProfile}
+                          onChange={setSaveProfile}
+                        />
+                        <Collapse open={saveProfile}>
+                          <div className="mt-2 space-y-3">
+                            <Input
+                              placeholder="Profile 名称"
+                              value={profileName}
+                              onChange={(e) => setProfileName(e.target.value)}
+                            />
+                            <CronField cron={cron} enabled={cronEnabled} onChange={(c, e) => { setCron(c); setCronEnabled(e) }} />
+                          </div>
+                        </Collapse>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Step 3：执行 */}
+              {step === 3 && taskId && <TaskRunView taskId={taskId} onRunningChange={setTaskRunning} />}
+              </motion.div>
+            </AnimatePresence>
+          </ScrollArea>
+
+          {/* 固定底部操作栏：始终可见，不随内容滚动 */}
+          <div className="flex shrink-0 items-center gap-3 border-t pt-3">
+            <div className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+              {step === 1 && <span>已选 {selectedTables.size} 张表{d.compareFirst && " · 将先对比差异"}</span>}
+              {step === 2 && plan && destructiveBlocked && (
+                <span className="text-amber-600 dark:text-amber-400">还有 {pendingDestructive.length} 个破坏性动作未确认</span>
+              )}
+              {step === 3 && <span>{taskRunning ? "任务在后台持续执行，关闭弹窗不会中断。" : "任务已结束，可关闭弹窗。"}</span>}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {step === 0 && (
+                <>
+                  <Button variant="ghost" onClick={requestClose}>取消</Button>
+                  <Button disabled={!canNext0} onClick={() => go(1)}>下一步</Button>
+                </>
+              )}
+              {step === 1 && (
+                <>
+                  <Button variant="outline" onClick={() => go(0)}>上一步</Button>
+                  <OptSwitch label="先对比再同步" checked={d.compareFirst} onChange={(v) => patch({ compareFirst: v })} />
+                  {d.compareFirst ? (
+                    <Button onClick={runCompare} disabled={busy || selectedTables.size === 0}>
+                      {busy ? <Loader2 className="animate-spin" /> : <GitCompareArrows />} 开始对比
+                    </Button>
+                  ) : (
+                    <Button onClick={buildPlan} disabled={busy || selectedTables.size === 0}>
+                      {busy ? <Loader2 className="animate-spin" /> : <Play />} 生成同步计划
+                    </Button>
+                  )}
+                </>
+              )}
+              {step === 2 && d.compareFirst && !plan && compareTaskId && (
+                <>
+                  <Button variant="outline" onClick={() => go(1)}>上一步</Button>
+                  <Button onClick={generatePlanFromCompare} disabled={busy}>
+                    {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} 由对比结果生成同步计划
+                  </Button>
+                </>
+              )}
+              {step === 2 && plan && (
+                <>
+                  <Button variant="outline" onClick={() => go(1)}>上一步</Button>
+                  <Button onClick={submit} disabled={busy || destructiveBlocked}>
+                    {busy ? <Loader2 className="animate-spin" /> : <Play />}
+                    {isEditing && saveProfile ? "保存并执行" : "提交执行"}
+                  </Button>
+                </>
+              )}
+              {step === 3 && <Button variant="outline" onClick={requestClose}>关闭</Button>}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* 任务运行中关闭弹窗：防止误以为关闭 = 取消 */}
+      <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>任务仍在运行，关闭弹窗？</AlertDialogTitle>
+            <AlertDialogDescription>
+              关闭弹窗不会取消或中断任务，可稍后在「同步中心 → 任务历史」查看进度与结果。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>继续等待</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { onOpenChange(false); reset() }}>后台运行并关闭</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -586,12 +769,12 @@ function ConnDbPicker({
 
 function ModeOption({ value, checked, title, desc }: { value: string; checked: boolean; title: string; desc: string }) {
   return (
-                  <label
-                    htmlFor={`mode-${value}`}
-                    className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 font-normal transition-colors duration-200 ${
-                      checked ? "border-primary" : ""
-                    }`}
-                  >
+    <label
+      htmlFor={`mode-${value}`}
+      className={`flex cursor-pointer items-start gap-2 rounded-md border p-2.5 font-normal transition-colors duration-200 ${
+        checked ? "border-primary" : ""
+      }`}
+    >
       <RadioGroupItem value={value} id={`mode-${value}`} />
       <span>
         <span className="block text-sm">{title}</span>
@@ -603,6 +786,7 @@ function ModeOption({ value, checked, title, desc }: { value: string; checked: b
 
 function TablePicker({
   tables,
+  total,
   loading,
   error,
   selected,
@@ -612,7 +796,10 @@ function TablePicker({
   onSelectAll,
   onClear,
 }: {
+  /** 当前搜索过滤后的表 */
   tables: { name: string; kind: string }[]
+  /** 库中全部表/视图数量 */
+  total: number
   loading: boolean
   error?: string
   selected: Set<string>
@@ -624,9 +811,12 @@ function TablePicker({
 }) {
   return (
     <div className="rounded-lg border p-3">
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-sm font-medium">
         选择表
         <Badge variant="secondary">{selected.size}</Badge>
+        {!loading && !error && (
+          <span className="text-xs font-normal text-muted-foreground">共 {total} 个对象</span>
+        )}
         <div className="relative ml-auto">
           <Search className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input className="h-8 w-44 pl-7" placeholder="搜索表…" value={search} onChange={(e) => onSearch(e.target.value)} />
@@ -635,13 +825,13 @@ function TablePicker({
         <Button variant="ghost" size="sm" onClick={onClear}>清空</Button>
       </div>
       {loading ? (
-        <div className="grid max-h-56 grid-cols-3 gap-1 overflow-auto rounded-md border p-2">
+        <div className="grid max-h-64 grid-cols-3 gap-1 overflow-auto rounded-md border p-2">
           {Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-6" />)}
         </div>
       ) : error ? (
         <div className="text-sm text-destructive">{error}</div>
       ) : (
-        <div className="grid max-h-56 grid-cols-2 gap-1 overflow-auto rounded-md border p-2 md:grid-cols-3">
+        <div className="grid max-h-64 grid-cols-2 gap-1 overflow-auto rounded-md border p-2 md:grid-cols-3">
           {tables.map((t) => (
             <label key={t.name} className={`flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent/50 ${t.kind !== "table" ? "opacity-60" : ""}`}>
               <Checkbox
@@ -652,6 +842,11 @@ function TablePicker({
               {t.kind === "view" && <span className="text-[10px] text-muted-foreground">视图</span>}
             </label>
           ))}
+          {tables.length === 0 && (
+            <div className="col-span-full py-6 text-center text-xs text-muted-foreground">
+              {total === 0 ? "该数据库没有表" : "无匹配的表"}
+            </div>
+          )}
         </div>
       )}
     </div>

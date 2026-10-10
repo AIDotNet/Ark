@@ -28,13 +28,13 @@ export function StatPill({ r }: { r: TableCompareResult }) {
   )
 }
 
-/** 对比结果：表卡片列表。 */
+/** 对比结果：表卡片列表。onOpenTable 缺省时（如向导弹窗内）不渲染行级差异入口。 */
 export function CompareResultView({
   taskId,
   onOpenTable,
 }: {
   taskId: string
-  onOpenTable: (table: string) => void
+  onOpenTable?: (table: string) => void
 }) {
   const task = useQuery({
     queryKey: ["syncTask", taskId],
@@ -81,7 +81,7 @@ export function CompareResultView({
               ) : (
                 <StatPill r={t} />
               )}
-              {!t.error && (
+              {!t.error && onOpenTable && (
                 <Button
                   size="xs"
                   variant="outline"
