@@ -1,4 +1,5 @@
-# Ark 开发环境：PostgreSQL 16 + MySQL 8（SQLite 使用本地文件，无需容器）
+# Ark 开发环境：PostgreSQL 16 + MySQL 8 + MariaDB + SQL Server + ClickHouse + openGauss
+# （SQLite / DuckDB 使用本地文件，无需容器；达梦 DM8 / 人大金仓 KingbaseES 镜像不公开分发，见文件末尾注释）
 # 启动: docker compose -f docker-compose.dev.yml up -d
 services:
   postgres:
@@ -27,6 +28,70 @@ services:
     volumes:
       - ark_mysql_data:/var/lib/mysql
 
+  mariadb:
+    image: mariadb:11.4
+    container_name: ark-mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: ark123
+      MARIADB_USER: ark
+      MARIADB_PASSWORD: ark123
+      MARIADB_DATABASE: ark_demo
+    ports:
+      - "3307:3306"
+    volumes:
+      - ark_mariadb_data:/var/lib/mysql
+
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ark-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Ark@12345"
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - ark_mssql_data:/var/opt/mssql
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: ark-clickhouse
+    environment:
+      CLICKHOUSE_USER: ark
+      CLICKHOUSE_PASSWORD: ark123
+      CLICKHOUSE_DB: ark_demo
+    ports:
+      - "8123:8123"
+    volumes:
+      - ark_clickhouse_data:/var/lib/clickhouse
+
+  opengauss:
+    image: opengauss/opengauss:5.0.0
+    container_name: ark-opengauss
+    environment:
+      GS_PASSWORD: Ark@12345
+      GS_DB: ark_demo
+    ports:
+      - "5433:5432"
+    volumes:
+      - ark_opengauss_data:/var/lib/opengauss
+
 volumes:
   ark_pg_data:
   ark_mysql_data:
+  ark_mariadb_data:
+  ark_mssql_data:
+  ark_clickhouse_data:
+  ark_opengauss_data:
+
+# —— 达梦 DM8 ——
+# 官方镜像不发布到 Docker Hub：从 eco.dameng.com 下载 dm8 docker tar 后
+#   docker load -i dm8_20240715_rev232765_x86_rh6_64_single.tar
+#   docker run -d --name ark-dm8 -p 5236:5236 -e PAGE_SIZE=16 dm8_single:dm8_20240715_rev232765_x86_rh6_64
+# 连接: SYSDBA / SYSDBA001（以镜像说明为准），默认端口 5236
+#
+# —— 人大金仓 KingbaseES ——
+# 官方镜像需从金仓官网/生态站获取（kingbase_v009r001c* 单机版 tar）：
+#   docker load -i <kingbase tar>
+#   docker run -d --name ark-kes -p 54321:54321 -e KINGBASE_USER=system -e KINGBASE_PASSWORD=ark123 <image>
+# 注意：Ark 仅支持 PG 兼容模式，初始化库时需选择 database_mode=pg

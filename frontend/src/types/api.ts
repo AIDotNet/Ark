@@ -1,6 +1,17 @@
 // 与后端 Ark.Core DTO 对齐的类型（camelCase）
+// 与 backend/src/Ark.Core/Metadata/Canonical.cs 的 ArkDialect 枚举序一致（值仅追加）
 
-export type Dialect = "PostgreSQL" | "MySQL" | "SQLite";
+export type Dialect =
+  | "PostgreSQL"
+  | "MySQL"
+  | "SQLite"
+  | "MariaDB"
+  | "SqlServer"
+  | "ClickHouse"
+  | "DuckDB"
+  | "DM8"
+  | "KingbaseES"
+  | "OpenGauss";
 
 export interface ConnectionDto {
   id: string;

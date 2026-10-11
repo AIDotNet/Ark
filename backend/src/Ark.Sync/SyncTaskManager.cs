@@ -216,12 +216,13 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                 state.Log.Add($"源端一致快照不可用（{ex.Message}），按普通读继续");
             }
 
-            // PG 目标：自动创建缺失的非 public schema（跨 schema 同步开箱即用）
-            if (target.Dialect == ArkDialect.PostgreSQL)
+            // 支持CREATE SCHEMA IF NOT EXISTS 的目标（PG 系）：自动创建缺失的非默认 schema（跨 schema 同步开箱即用）
+            if (Dialects.Get(target.Dialect).SupportsCreateSchemaIfNotExists)
             {
+                var defaultSchema = Dialects.Get(target.Dialect).DefaultTargetSchema ?? "public";
                 var schemas = (state.Plan?.Tables ?? []).Select(t => t.Target.Schema)
                     .Concat(state.CompareRequestRef is null ? [] : [state.CompareRequestRef.TargetSchema])
-                    .Where(s => !string.IsNullOrEmpty(s) && !string.Equals(s, "public", StringComparison.OrdinalIgnoreCase))
+                    .Where(s => !string.IsNullOrEmpty(s) && !string.Equals(s, defaultSchema, StringComparison.OrdinalIgnoreCase))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 foreach (var schema in schemas)
                 {
@@ -229,7 +230,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                     {
                         await target.ExecuteDdlAsync(
                             state.Plan?.Options.TargetDatabase ?? state.CompareRequestRef!.TargetDatabase,
-                            [$"CREATE SCHEMA IF NOT EXISTS \"{schema}\""], ct);
+                            [$"CREATE SCHEMA IF NOT EXISTS {target.Ddl.Quote(schema!)}"], ct);
                     }
                     catch { /* 已存在或无权限：由后续步骤报错 */ }
                 }
@@ -319,7 +320,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             .SelectMany(l => l)
             .Where(t => t.Data is { } d && d.ConflictMode == ConflictMode.Truncate && t.TargetTableExists)
             .ToList();
-        if (toTruncate.Count > 1 && target.Dialect == ArkDialect.PostgreSQL)
+        if (toTruncate.Count > 1 && Dialects.Get(target.Dialect).SupportsMultiTableTruncate)
         {
             ct.ThrowIfCancellationRequested();
             try
@@ -442,15 +443,12 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             .Where(r => !string.Equals(r, te.Source.Table, StringComparison.OrdinalIgnoreCase))
             .ToList() ?? [];
 
-    /// <summary>清空目标表前后的会话级 FK 检查开关（PG 无会话开关返回空：靠先子后父的逆序清空避免引用冲突）。</summary>
-    private static string[] FkCheckStmts(ArkDialect dialect, bool off) => (dialect, off) switch
+    /// <summary>清空目标表前后的会话级 FK 检查开关（PG 系无会话开关返回空：靠先子后父的逆序清空避免引用冲突）。</summary>
+    private static string[] FkCheckStmts(ArkDialect dialect, bool off)
     {
-        (ArkDialect.MySQL, true) => ["SET FOREIGN_KEY_CHECKS=0"],
-        (ArkDialect.MySQL, false) => ["SET FOREIGN_KEY_CHECKS=1"],
-        (ArkDialect.SQLite, true) => ["PRAGMA foreign_keys=OFF"],
-        (ArkDialect.SQLite, false) => ["PRAGMA foreign_keys=ON"],
-        _ => [],
-    };
+        var d = Dialects.Get(dialect);
+        return (off ? d.FkOffStatements : d.FkOnStatements).ToArray();
+    }
 
     private async Task ExecuteTableAsync(
         SyncTaskState state, SyncExecuteRequest req, TableExecution te,
@@ -639,9 +637,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             var srcRef = new TableRef(req.SourceDatabase, sel.Schema, sel.Table);
             var tgtSchema = !string.IsNullOrWhiteSpace(req.TargetSchema)
                 ? req.TargetSchema
-                : target.Dialect == ArkDialect.PostgreSQL
-                    ? (string.IsNullOrEmpty(sel.Schema) ? "public" : sel.Schema)
-                    : null;
+                : Dialects.Get(target.Dialect).ResolveTargetSchema(source.Dialect, sel.Schema);
             var tgtRef = new TableRef(req.TargetDatabase, tgtSchema, sel.Table);
 
             TableCompareResult result;

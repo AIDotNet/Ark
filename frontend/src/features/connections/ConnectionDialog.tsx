@@ -28,12 +28,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
+import { DIALECT_LIST, dialectInfo } from "@/features/connections/dialects"
 import type { ConnectionDto } from "@/types/api"
 
 const schema = z
   .object({
     name: z.string().min(1, "名称必填").max(100),
-    dialect: z.enum(["PostgreSQL", "MySQL", "SQLite"]),
+    dialect: z.enum(DIALECT_LIST),
     host: z.string().optional(),
     port: z.string().optional(),
     username: z.string().optional(),
@@ -42,11 +43,11 @@ const schema = z
     filePath: z.string().optional(),
     readOnly: z.boolean(),
   })
-  .refine((v) => v.dialect !== "SQLite" || (v.filePath ?? "").trim().length > 0, {
-    message: "SQLite 连接必须提供数据库文件路径",
+  .refine((v) => !dialectInfo(v.dialect).fileBased || (v.filePath ?? "").trim().length > 0, {
+    message: "该类型连接必须提供数据库文件路径",
     path: ["filePath"],
   })
-  .refine((v) => v.dialect === "SQLite" || (v.host ?? "").trim().length > 0, {
+  .refine((v) => dialectInfo(v.dialect).fileBased || (v.host ?? "").trim().length > 0, {
     message: "主机地址必填",
     path: ["host"],
   })
@@ -93,15 +94,16 @@ export function ConnectionDialog({
   }, [open, editing, form])
 
   async function onSubmit(values: ConnectionFormValues) {
+    const info = dialectInfo(values.dialect)
     const payload = {
       name: values.name,
       dialect: values.dialect,
-      host: values.dialect === "SQLite" ? null : values.host || null,
-      port: values.dialect === "SQLite" || !values.port ? null : Number(values.port),
-      username: values.dialect === "SQLite" ? null : values.username || null,
+      host: info.fileBased ? null : values.host || null,
+      port: info.fileBased || !values.port ? null : Number(values.port),
+      username: info.fileBased ? null : values.username || null,
       password: values.password ? values.password : null,
-      database: values.dialect === "SQLite" ? null : values.database || null,
-      filePath: values.dialect === "SQLite" ? values.filePath || null : null,
+      database: info.fileBased ? null : values.database || null,
+      filePath: info.fileBased ? values.filePath || null : null,
       readOnly: values.readOnly,
     }
     try {
@@ -148,7 +150,8 @@ export function ConnectionDialog({
     }
   }
 
-  const isSqlite = dialect === "SQLite"
+  const info = dialectInfo(dialect)
+  const isFileBased = info.fileBased
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -187,9 +190,11 @@ export function ConnectionDialog({
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <SelectItem value="PostgreSQL">PostgreSQL</SelectItem>
-                        <SelectItem value="MySQL">MySQL</SelectItem>
-                        <SelectItem value="SQLite">SQLite</SelectItem>
+                        {DIALECT_LIST.map((d) => (
+                          <SelectItem key={d} value={d}>
+                            {dialectInfo(d).label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -198,7 +203,7 @@ export function ConnectionDialog({
               />
             </div>
 
-            {!isSqlite && (
+            {!isFileBased && (
               <div className="grid grid-cols-4 gap-3">
                 <FormField
                   control={form.control}
@@ -221,7 +226,7 @@ export function ConnectionDialog({
                       <FormLabel className="text-xs">端口</FormLabel>
                       <FormControl>
                         <Input
-                          placeholder={dialect === "MySQL" ? "3306" : "5432"}
+                          placeholder={info.defaultPort ? String(info.defaultPort) : "端口"}
                           inputMode="numeric"
                           onChange={(e) => field.onChange(e.target.value.replace(/\D/g, ""))}
                           value={field.value ?? ""}
@@ -234,7 +239,7 @@ export function ConnectionDialog({
               </div>
             )}
 
-            {!isSqlite && (
+            {!isFileBased && (
               <div className="grid grid-cols-2 gap-3">
                 <FormField
                   control={form.control}
@@ -265,7 +270,7 @@ export function ConnectionDialog({
               </div>
             )}
 
-            {!isSqlite && (
+            {!isFileBased && (
               <FormField
                 control={form.control}
                 name="database"
@@ -281,7 +286,7 @@ export function ConnectionDialog({
               />
             )}
 
-            {isSqlite && (
+            {isFileBased && (
               <FormField
                 control={form.control}
                 name="filePath"

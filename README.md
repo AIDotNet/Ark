@@ -1,6 +1,6 @@
 # Ark — 多数据库管理与同步工具
 
-单机单用户的 Web 版数据库管理工具（布局参考 Navicat），支持 **PostgreSQL / MySQL / SQLite** 的连接管理、可视化操作，以及**同构 + 异构**的库级/表级同步（仅结构 或 结构+数据），含插件/扩展函数的自动翻译与目标库扩展依赖检查。
+单机单用户的 Web 版数据库管理工具（布局参考 Navicat），支持 **PostgreSQL / MySQL / MariaDB / SQL Server / SQLite / DuckDB / ClickHouse / 达梦 DM8 / 人大金仓 KingbaseES / openGauss** 十种数据库的连接管理、可视化操作，以及**同构 + 异构**的库级/表级同步（仅结构 或 结构+数据），含插件/扩展函数的自动翻译与目标库扩展依赖检查。
 
 ## 功能
 
@@ -18,7 +18,7 @@
 
 ## 技术栈
 
-- **后端**：.NET 10 Minimal APIs（`IEndpointFilter` 统一响应包络 `{code, message, data, traceId, timestamp}` + 统一错误码分段）、Npgsql / MySqlConnector / Microsoft.Data.Sqlite（`IDbProvider` 抽象，四层模型 Connection → Database → Schema → Table）、OpenAPI
+- **后端**：.NET 10 Minimal APIs（`IEndpointFilter` 统一响应包络 `{code, message, data, traceId, timestamp}` + 统一错误码分段）、Npgsql / MySqlConnector / Microsoft.Data.Sqlite / Microsoft.Data.SqlClient / ClickHouse.Client / DuckDB.NET / Kdbndp（金仓）/ DM.DmProvider（达梦）（`IDbProvider` 抽象，四层模型 Connection → Database → Schema → Table；方言静态特征表 `Ark.Core/Metadata/DialectDescriptor.cs` 集中承载标识符引用/分页/批量参数上限/会话语句等差异）、OpenAPI
 - **前端**：Vite + React 19 + TypeScript + Tailwind CSS v4 + **shadcn/ui**（全部 UI 组件来自组件库；数据网格 = TanStack Table + shadcn Data Table 模式 + 虚拟滚动）、TanStack Query、Zustand、CodeMirror 6
 - **测试**：xUnit 单元测试（类型映射/函数翻译/结构 Diff/行哈希/CSV）+ 真实链路测试（SQLite Provider 端到端同步）+ Testcontainers 跨库集成测试（无 Docker/无网络自动跳过）
 
@@ -28,13 +28,14 @@
 backend/
   src/Ark.Core                      # DTO、包络/错误码、Canonical 元数据模型、类型映射、函数翻译
   src/Ark.Providers.Abstractions    # IDbProvider / IDdlGenerator / 共享 ProviderBase
-  src/Ark.Providers.PostgreSQL|MySQL|SQLite
+  src/Ark.Providers.PostgreSQL|MySQL|SQLite      # 既有三库 Provider
+  src/Ark.Providers.MariaDB|SqlServer|ClickHouse|DuckDB|DM8|KingbaseES|OpenGauss  # v1.1 新增七库 Provider
   src/Ark.Sync                      # 结构 Diff、同步计划器、全量/行级Diff 引擎、任务调度、导入导出
   src/Ark.Api                       # Minimal API 端点、统一响应过滤器、ark.db 存储
   tests/                            # 单元 + 真实链路 + Testcontainers
 frontend/                           # Vite + React + shadcn/ui
 docs/                               # 文档站（Fumadocs，源文件 docs/content/docs）
-docker-compose.dev.yml              # 开发用 PostgreSQL 16 + MySQL 8.4
+docker-compose.dev.yml              # 开发用 PostgreSQL / MySQL / MariaDB / SQL Server / ClickHouse / openGauss
 docker-compose.yml                  # 生产部署
 ```
 
@@ -70,9 +71,11 @@ Ark 自身数据（连接配置、同步报告）存放在 `data/ark.db`（SQLit
 ```bash
 dotnet test backend/tests/Ark.Core.Tests
 dotnet test backend/tests/Ark.Sync.Tests
-dotnet test backend/tests/Ark.Integration.Tests   # 需要 Docker；网络不可达时自动跳过
+dotnet test backend/tests/Ark.Integration.Tests   # 容器用例需要 Docker；无 Docker/镜像不可达时自动跳过
 cd frontend && pnpm build                          # tsc + vite build
 ```
+
+集成测试覆盖：PostgreSQL / MySQL / MariaDB / SQL Server / ClickHouse / openGauss（Testcontainers）；DuckDB（本地临时文件真链路，无需 Docker）；达梦 DM8 与人大金仓的镜像不在公共仓库，需本地 `docker load` 后通过环境变量 `ARK_DM8_IMAGE` / `ARK_KES_IMAGE` 指定，未设置时自动跳过。
 
 ## API 摘要
 
@@ -97,14 +100,21 @@ cd frontend && pnpm build                          # tsc + vite build
 | 空值合并 | `IFNULL(a,b)` | `COALESCE(a,b)` | `IFNULL(a,b)` |
 | 拼接 | `CONCAT(a,b)` | `a \|\| b` | `a \|\| b` |
 
+v1.1 起翻译矩阵扩展至十方言，例如：SQL Server `GETDATE()→SYSDATETIME()`、`NEWID()`；ClickHouse `now()/generateUUIDv4()`；DM8 `SYSDATE/NVL`（`SYS_GUID()` 无 VARCHAR 等价物，按不支持报错提示）；金仓/openGauss 沿用 PG 输出（`now()/gen_random_uuid()`）。
+
 无法翻译的表达式在同步计划中以 warning/error 显式列出（error 默认忽略该默认值，warning 原样复制请人工确认）；目标端缺失的扩展给出 `CREATE EXTENSION IF NOT EXISTS …` 建议。
 
 ### 类型映射
 
-以规范类型为中枢双向映射（`Ark.Core/Typing/TypeMapper`）：无法精确映射时**降级 + 警告**（如 `tinyint(1)`↔BOOLEAN、`jsonb`→`JSON`、SQLite 无强制精度），精度截断在同步计划中显式警告，绝不静默失败。
+以规范类型为中枢双向映射（`Ark.Core/Typing/TypeMapper`）：无法精确映射时**降级 + 警告**（如 `tinyint(1)`↔BOOLEAN、`jsonb`→`JSON`、SQLite 无强制精度、ClickHouse `Array/Map/Tuple`→JSON 文本、SQL Server `sql_variant`/`hierarchyid`→未识别、DM8 `NUMBER`↔Decimal），精度截断在同步计划中显式警告，绝不静默失败。新增方言的映射矩阵随 Provider 同步登记于 `Ark.Core/Metadata/DialectDescriptor.cs`。
 
 ## v1 边界
 
 - SQLite 仅支持其 ALTER 子集（加列/删列/改名），其余变更提示“需重建表”
 - 视图不同步数据；无主键表 Diff 模式自动回退全量、数据网格只读
+- 人大金仓仅支持 **PG 兼容模式**（`database_mode=pg`），其他兼容模式连接时报错提示
+- ClickHouse 无事务：一致快照降级为普通读、变更集提交无回滚、SkipExisting 冲突语义不支持（去重依赖引擎）
+- SQL Server：SkipExisting 暂不支持（无 ON CONFLICT）；一致快照依赖库级 SNAPSHOT 开关，未开启时降级 READ COMMITTED
+- openGauss：标准 Npgsql 直连在默认 sha256 认证下实测不兼容（SASL 0 mechanisms），容器测试自动跳过并提示；服务端改 md5 兼容认证（password_encryption_type=1 + pg_hba）或使用官方 Npgsql 分支驱动即可使用
+- 达梦 DM8 生成列/表达式索引不做转换（按普通列/忽略处理并警告）
 - 不含：登录/多用户、版本化迁移脚本、断点续传增量同步、SSH 隧道（v1.5 候选）

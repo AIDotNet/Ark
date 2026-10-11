@@ -27,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
-import { defaultSchema } from "@/components/layout/ConnectionTree"
+import { defaultSchema } from "@/features/connections/dialects"
 import { Collapse, springSoft, stepTransition, stepVariants } from "@/components/ui/motion"
 import { CronField } from "@/features/sync/CronField"
 import { CompareResultView } from "@/features/sync/CompareViews"

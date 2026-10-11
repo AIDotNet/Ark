@@ -41,7 +41,7 @@ public sealed class PasswordProtector(IDataProtectionProvider provider)
     public string? Unprotect(string? cipher) => cipher is null ? null : _protector.Unprotect(cipher);
 }
 
-/// <summary>三库 Provider 工厂。</summary>
+/// <summary>方言 Provider 工厂（新增数据库：实现 Provider 后在此注册）。</summary>
 public static class ProviderRegistry
 {
     public static IDbProvider Create(ConnectionSpec spec) => spec.Dialect switch
@@ -49,6 +49,13 @@ public static class ProviderRegistry
         ArkDialect.PostgreSQL => new Ark.Providers.PostgreSQL.PostgreSqlProvider(spec),
         ArkDialect.MySQL => new Ark.Providers.MySQL.MySqlProvider(spec),
         ArkDialect.SQLite => new Ark.Providers.SQLite.SqliteProvider(spec),
+        ArkDialect.MariaDB => new Ark.Providers.MariaDB.MariaDbProvider(spec),
+        ArkDialect.SqlServer => new Ark.Providers.SqlServer.SqlServerProvider(spec),
+        ArkDialect.ClickHouse => new Ark.Providers.ClickHouse.ClickHouseProvider(spec),
+        ArkDialect.DuckDB => new Ark.Providers.DuckDB.DuckDbProvider(spec),
+        ArkDialect.DM8 => new Ark.Providers.DM8.Dm8Provider(spec),
+        ArkDialect.KingbaseES => new Ark.Providers.KingbaseES.KdbndpProvider(spec),
+        ArkDialect.OpenGauss => new Ark.Providers.OpenGauss.OpenGaussProvider(spec),
         _ => throw new ArgumentOutOfRangeException(nameof(spec), spec.Dialect, "未知方言"),
     };
 

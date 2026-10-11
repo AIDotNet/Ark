@@ -125,23 +125,35 @@ public sealed class SyncPlanner
                     });
                 var defer = req.DeferIndexes && req.Mode == SyncMode.StructureAndData;
                 foreach (var idx in converted.Indexes)
-                foreach (var sql in target.Ddl.CreateIndex(idx, tgtRef, converted))
-                    (defer ? postCopy : actions).Add(new DdlAction
-                    {
-                        Id = ActionId(sel.Table, "CreateIndex", sql),
-                        Kind = "CreateIndex",
-                        Summary = $"创建索引 {idx.Name}（{string.Join(", ", idx.Columns)}）" + (defer ? "（数据复制后创建）" : ""),
-                        Sql = sql,
-                    });
+                {
+                    var idxStmts = target.Ddl.CreateIndex(idx, tgtRef, converted);
+                    if (idxStmts.Count == 0)
+                        issueList.Add(new ConversionIssue("warning",
+                            $"目标方言 {target.Dialect} 不支持二级索引，索引 {idx.Name}（{string.Join(", ", idx.Columns)}）将不会创建"));
+                    foreach (var sql in idxStmts)
+                        (defer ? postCopy : actions).Add(new DdlAction
+                        {
+                            Id = ActionId(sel.Table, "CreateIndex", sql),
+                            Kind = "CreateIndex",
+                            Summary = $"创建索引 {idx.Name}（{string.Join(", ", idx.Columns)}）" + (defer ? "（数据复制后创建）" : ""),
+                            Sql = sql,
+                        });
+                }
                 foreach (var fk in converted.ForeignKeys)
-                foreach (var sql in target.Ddl.CreateForeignKey(fk, tgtRef))
-                    (defer ? postCopy : actions).Add(new DdlAction
-                    {
-                        Id = ActionId(sel.Table, "AddForeignKey", sql),
-                        Kind = "AddForeignKey",
-                        Summary = $"添加外键 {fk.Name} → {fk.ReferencedTable}" + (defer ? "（数据复制后创建）" : ""),
-                        Sql = sql,
-                    });
+                {
+                    var fkStmts = target.Ddl.CreateForeignKey(fk, tgtRef);
+                    if (fkStmts.Count == 0)
+                        issueList.Add(new ConversionIssue("warning",
+                            $"目标方言 {target.Dialect} 不支持为表追加外键，外键 {fk.Name}（→ {fk.ReferencedTable}）将不会创建"));
+                    foreach (var sql in fkStmts)
+                        (defer ? postCopy : actions).Add(new DdlAction
+                        {
+                            Id = ActionId(sel.Table, "AddForeignKey", sql),
+                            Kind = "AddForeignKey",
+                            Summary = $"添加外键 {fk.Name} → {fk.ReferencedTable}" + (defer ? "（数据复制后创建）" : ""),
+                            Sql = sql,
+                        });
+                }
             }
             else
             {
@@ -155,7 +167,7 @@ public sealed class SyncPlanner
                     issueList.Add(new ConversionIssue("hint",
                         $"疑似列改名 {r.DropColumn} → {r.AddColumn}（置信度 {r.Confidence}）。确认为改名请在列映射中加入映射以保留数据"));
 
-                actions.AddRange(DiffToActions(target, baseDiff, tgtRef, sel.Table));
+                actions.AddRange(DiffToActions(target, baseDiff, tgtRef, sel.Table, issueList));
             }
 
             // 数据计划
@@ -219,24 +231,26 @@ public sealed class SyncPlanner
                 .Where(r => selectedNames.Contains(r) && !string.Equals(r, sel.Table, StringComparison.OrdinalIgnoreCase))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            // PG 非 public schema：生成 DDL 中的裸表名（如 FK REFERENCES "users"）需 search_path 解析
-            if (target.Dialect == ArkDialect.PostgreSQL
+            // PG 系非默认 schema：生成 DDL 中的裸表名（如 FK REFERENCES "users"）需 search_path 解析
+            var tgtDescriptor = Dialects.Get(target.Dialect);
+            var defaultSchema = tgtDescriptor.DefaultTargetSchema ?? "public";
+            if (tgtDescriptor.UsesSearchPath
                 && !string.IsNullOrEmpty(tgtSchema)
-                && !string.Equals(tgtSchema, "public", StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(tgtSchema, defaultSchema, StringComparison.OrdinalIgnoreCase))
             {
                 actions.Insert(0, new DdlAction
                 {
                     Id = ActionId(sel.Table, "SetSearchPath", $"SET search_path TO {tgtSchema}"),
                     Kind = "SetSearchPath",
                     Summary = $"切换 search_path 至 {tgtSchema}（DDL 用）",
-                    Sql = $"SET search_path TO \"{tgtSchema}\"",
+                    Sql = tgtDescriptor.SetSearchPathSql(tgtSchema) + ";",
                 });
                 var reset = new DdlAction
                 {
                     Id = ActionId(sel.Table, "ResetSearchPath", "RESET search_path"),
                     Kind = "ResetSearchPath",
                     Summary = "恢复 search_path",
-                    Sql = "RESET search_path;",
+                    Sql = tgtDescriptor.ResetSearchPathSql() + ";",
                 };
                 if (postCopy.Count > 0) postCopy.Add(reset);
                 else actions.Add(reset);
@@ -334,7 +348,8 @@ public sealed class SyncPlanner
                     IsDestructive = true,
                 });
         }
-        if (target.Dialect == ArkDialect.PostgreSQL && !string.IsNullOrEmpty(tgtSchema))
+        var viewDescriptor = Dialects.Get(target.Dialect);
+        if (viewDescriptor.UsesSearchPath && !string.IsNullOrEmpty(tgtSchema))
         {
             // 视图查询体可能含未限定的表名：临时切换 search_path 执行
             actions.Add(new DdlAction
@@ -342,7 +357,7 @@ public sealed class SyncPlanner
                 Id = ActionId(sel.Table, "SetSearchPath", $"SET search_path TO {tgtSchema}"),
                 Kind = "SetSearchPath",
                 Summary = $"切换 search_path 至 {tgtSchema}（视图创建用）",
-                Sql = $"SET search_path TO \"{tgtSchema}\"",
+                Sql = viewDescriptor.SetSearchPathSql(tgtSchema) + ";",
             });
         }
         actions.Add(new DdlAction
@@ -353,27 +368,21 @@ public sealed class SyncPlanner
             Sql = createSql,
             Warnings = ["视图查询体按源端原文复制，未做方言翻译，请人工确认"],
         });
-        if (target.Dialect == ArkDialect.PostgreSQL && !string.IsNullOrEmpty(tgtSchema))
+        if (viewDescriptor.UsesSearchPath && !string.IsNullOrEmpty(tgtSchema))
         {
             actions.Add(new DdlAction
             {
                 Id = ActionId(sel.Table, "ResetSearchPath", "RESET search_path"),
                 Kind = "ResetSearchPath",
                 Summary = "恢复 search_path",
-                Sql = "RESET search_path;",
+                Sql = viewDescriptor.ResetSearchPathSql() + ";",
             });
         }
     }
 
     private static string BuildCreateView(ArkDialect dialect, string table, string? schema, string def, string? database)
     {
-        string name;
-        if (dialect == ArkDialect.PostgreSQL && !string.IsNullOrEmpty(schema))
-            name = $"\"{schema}\".\"{table}\"";
-        else if (dialect == ArkDialect.MySQL)
-            name = string.IsNullOrEmpty(database) ? $"`{table}`" : $"`{database}`.`{table}`";
-        else
-            name = $"\"{table}\"";
+        var name = Dialects.Get(dialect).QuoteQualified(database, schema, table);
         var body = ExtractViewBody(def);
         return $"CREATE OR REPLACE VIEW {name} AS {body}";
     }
@@ -424,9 +433,9 @@ public sealed class SyncPlanner
         }
     }
 
-    /// <summary>把逐项 Diff 变成带破坏性标记的 DdlAction。</summary>
+    /// <summary>把逐项 Diff 变成带破坏性标记的 DdlAction。方言不支持的动作（生成器返回空）以 warning 显式列出。</summary>
     private static List<DdlAction> DiffToActions(
-        IDbProvider target, TableDiff baseDiff, TableRef tgtRef, string tableName)
+        IDbProvider target, TableDiff baseDiff, TableRef tgtRef, string tableName, List<ConversionIssue> issues)
     {
         var actions = new List<DdlAction>();
         var empty = baseDiff with
@@ -472,25 +481,37 @@ public sealed class SyncPlanner
             Emit(empty with { DroppedColumns = [col] }, "DropColumn", $"删除列 {tableName}.{col.Name}", true);
 
         foreach (var idx in baseDiff.DroppedIndexes)
-        foreach (var sql in target.Ddl.DropIndex(idx.Name, tgtRef))
-            actions.Add(new DdlAction
-            {
-                Id = ActionId(tableName, "DropIndex", sql),
-                Kind = "DropIndex",
-                Summary = $"删除索引 {idx.Name}",
-                Sql = sql,
-                Warnings = ["删除索引不损失数据，但影响查询性能直至重建"],
-            });
+        {
+            var dropStmts = target.Ddl.DropIndex(idx.Name, tgtRef);
+            if (dropStmts.Count == 0)
+                issues.Add(new ConversionIssue("hint",
+                    $"目标方言 {target.Dialect} 无需/无法删除索引，索引 {idx.Name} 保持原状"));
+            foreach (var sql in dropStmts)
+                actions.Add(new DdlAction
+                {
+                    Id = ActionId(tableName, "DropIndex", sql),
+                    Kind = "DropIndex",
+                    Summary = $"删除索引 {idx.Name}",
+                    Sql = sql,
+                    Warnings = ["删除索引不损失数据，但影响查询性能直至重建"],
+                });
+        }
 
         foreach (var idx in baseDiff.AddedIndexes)
-        foreach (var sql in target.Ddl.CreateIndex(idx, tgtRef, baseDiff.After))
-            actions.Add(new DdlAction
-            {
-                Id = ActionId(tableName, "CreateIndex", sql),
-                Kind = "CreateIndex",
-                Summary = $"创建索引 {idx.Name}（{string.Join(", ", idx.Columns)}）",
-                Sql = sql,
-            });
+        {
+            var idxStmts = target.Ddl.CreateIndex(idx, tgtRef, baseDiff.After);
+            if (idxStmts.Count == 0)
+                issues.Add(new ConversionIssue("warning",
+                    $"目标方言 {target.Dialect} 不支持二级索引，索引 {idx.Name}（{string.Join(", ", idx.Columns)}）将不会创建"));
+            foreach (var sql in idxStmts)
+                actions.Add(new DdlAction
+                {
+                    Id = ActionId(tableName, "CreateIndex", sql),
+                    Kind = "CreateIndex",
+                    Summary = $"创建索引 {idx.Name}（{string.Join(", ", idx.Columns)}）",
+                    Sql = sql,
+                });
+        }
 
         foreach (var fk in baseDiff.DroppedForeignKeys)
         foreach (var sql in target.Ddl.DropForeignKey(fk.Name, tgtRef))
@@ -503,14 +524,20 @@ public sealed class SyncPlanner
             });
 
         foreach (var fk in baseDiff.AddedForeignKeys)
-        foreach (var sql in target.Ddl.CreateForeignKey(fk, tgtRef))
-            actions.Add(new DdlAction
-            {
-                Id = ActionId(tableName, "AddForeignKey", sql),
-                Kind = "AddForeignKey",
-                Summary = $"添加外键 {fk.Name} → {fk.ReferencedTable}",
-                Sql = sql,
-            });
+        {
+            var fkStmts = target.Ddl.CreateForeignKey(fk, tgtRef);
+            if (fkStmts.Count == 0)
+                issues.Add(new ConversionIssue("warning",
+                    $"目标方言 {target.Dialect} 不支持为表追加外键，外键 {fk.Name}（→ {fk.ReferencedTable}）将不会创建"));
+            foreach (var sql in fkStmts)
+                actions.Add(new DdlAction
+                {
+                    Id = ActionId(tableName, "AddForeignKey", sql),
+                    Kind = "AddForeignKey",
+                    Summary = $"添加外键 {fk.Name} → {fk.ReferencedTable}",
+                    Sql = sql,
+                });
+        }
 
         return actions;
     }
@@ -573,14 +600,8 @@ public sealed class SyncPlanner
         IDbProvider target, ArkDialect sourceDialect, string? sourceSchema, string? overrideSchema)
     {
         if (!string.IsNullOrWhiteSpace(overrideSchema)) return overrideSchema;
-        return target.Dialect switch
-        {
-            // 仅当源端本身有真实 schema 层（PgSQL）时继承；SQLite 的 main / MySQL 的库名不是有效目标 schema
-            ArkDialect.PostgreSQL => sourceDialect == ArkDialect.PostgreSQL
-                ? (string.IsNullOrEmpty(sourceSchema) ? "public" : sourceSchema)
-                : "public",
-            _ => null, // MySQL/SQLite 无 schema 层
-        };
+        // 仅当源端本身有真实 schema 层（PG 系）时继承；SQLite 的 main / MySQL 的库名不是有效目标 schema
+        return Dialects.Get(target.Dialect).ResolveTargetSchema(sourceDialect, sourceSchema);
     }
 
     private static bool IsFunctionCall(string expr)

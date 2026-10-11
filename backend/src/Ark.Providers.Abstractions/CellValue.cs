@@ -18,6 +18,29 @@ public static class CellValue
         }
     }
 
+    /// <summary>
+    /// 读取行后规范化并展平 Provider 专属值类型（如 ClickHouseDecimal / MySqlDecimal）为 CLR 原生
+    /// （decimal / string），保证跨驱动参数绑定与行哈希稳定。跨方言同步的读取端必须使用本重载。
+    /// </summary>
+    public static void NormalizeRow(object?[] row, ArkDialect dialect)
+    {
+        NormalizeRow(row);
+        for (var i = 0; i < row.Length; i++) row[i] = ToPortable(row[i]);
+    }
+
+    private static object? ToPortable(object? v)
+    {
+        if (v is null) return null;
+        // 核心 CLR 类型（含 byte[]/DateTime/TimeSpan/DateOnly/Guid/数值/bool 等）直接放行
+        if (v.GetType().Assembly == typeof(object).Assembly) return v;
+        if (v is IConvertible)
+        {
+            try { return Convert.ToDecimal(v, CultureInfo.InvariantCulture); }
+            catch { /* 数值转换失败退化为字符串 */ }
+        }
+        return v.ToString();
+    }
+
     public static object? FromJson(JsonElement el, CanonicalType type)
     {
         switch (el.ValueKind)
@@ -74,7 +97,8 @@ public static class CellValue
     public static object? ToParam(object? value, ArkDialect dialect) => value switch
     {
         null => DBNull.Value,
-        Guid g when dialect != ArkDialect.PostgreSQL => g.ToString(),
+        // PG 系（含金仓/openGauss 的 Npgsql 系驱动）走原生 uuid 参数，其余以字符串传递
+        Guid g when dialect is not (ArkDialect.PostgreSQL or ArkDialect.KingbaseES or ArkDialect.OpenGauss) => g.ToString(),
         bool b when dialect == ArkDialect.SQLite => b ? 1L : 0L,
         DateTimeOffset dto when dialect == ArkDialect.SQLite => dto.ToString("O"),
         _ => value,

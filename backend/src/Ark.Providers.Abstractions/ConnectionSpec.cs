@@ -24,4 +24,5 @@ public sealed record DbCapabilities(
     bool SupportsIndexConcurrently,
     bool SupportsBulkCopy = false,
     bool SupportsConsistentSnapshot = false,
-    string ServerKind = "");
+    string ServerKind = "",
+    bool InlineForeignKeys = false); // 建表时外键内联在 CREATE TABLE 中（SQLite/DuckDB），无需单独语句

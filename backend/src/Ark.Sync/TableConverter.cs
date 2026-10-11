@@ -51,8 +51,8 @@ public static class TableConverter
                     }
                 }
 
-                // 布尔列的 0/1 字面量默认值：PostgreSQL 要求 true/false（integer 不能隐式转 boolean）
-                if (to == ArkDialect.PostgreSQL && col.Type.Id == CanonicalTypeId.Boolean
+                // 布尔列的 0/1 字面量默认值：PG 系要求 true/false（integer 不能隐式转 boolean）
+                if (DialectDescriptor.PgLikeDialects.Contains(to) && col.Type.Id == CanonicalTypeId.Boolean
                     && newKind == ValueExprKind.Literal)
                 {
                     newRaw = newRaw switch
@@ -95,10 +95,10 @@ public static class TableConverter
                     issues.Add(new ConversionIssue("error",
                         $"列 {col.Name}: SQLite 的自增要求“单一整数主键”，该列不满足，自增语义将丢失"));
             }
-            if (to == ArkDialect.MySQL &&
+            if (DialectDescriptor.MySqlLikeDialects.Contains(to) &&
                 !source.PrimaryKeyColumns.Contains(col.Name, StringComparer.OrdinalIgnoreCase))
             {
-                issues.Add(new ConversionIssue("warning", $"列 {col.Name}: MySQL 的 AUTO_INCREMENT 必须位于主键上，已忽略自增属性"));
+                issues.Add(new ConversionIssue("warning", $"列 {col.Name}: MySQL 系的 AUTO_INCREMENT 必须位于主键上，已忽略自增属性"));
             }
         }
 

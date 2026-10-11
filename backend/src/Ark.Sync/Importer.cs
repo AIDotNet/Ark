@@ -102,7 +102,10 @@ public static class Importer
 
         long inserted = 0;
         await using var conn = await target.OpenConnectionAsync(table.Database, ct);
-        var effectiveBatch = Math.Max(1, Math.Min(batchSize <= 0 ? 500 : batchSize, 900 / Math.Max(1, targetCols.Count)));
+        var desc = Dialects.Get(target.Dialect);
+        var effectiveBatch = Math.Max(1, Math.Min(
+            Math.Min(batchSize <= 0 ? 500 : batchSize, 500),
+            desc.MaxBatchParams / Math.Max(1, targetCols.Count)));
 
         foreach (var chunk in Chunk(rows, effectiveBatch))
         {
@@ -121,12 +124,14 @@ public static class Importer
                     {
                         row.TryGetValue(col.Name, out var el);
                         var p = cmd.CreateParameter();
-                        p.ParameterName = $"@p{pi++}";
+                        var bare = $"p{pi++}";
+                        p.ParameterName = desc.MakeParamName(bare);
                         p.Value = CellValue.ToParam(el is null ? null : CellValue.FromJson(el.Value, col.Type), target.Dialect);
                         cmd.Parameters.Add(p);
-                        ps.Add(target.Dialect == ArkDialect.PostgreSQL && Ark.Core.Typing.TypeMapper.PgCastFor(col) is { } cast
-                            ? p.ParameterName + "::" + cast
-                            : p.ParameterName);
+                        var castFor = desc.ParamCastFor;
+                        ps.Add(castFor is not null && castFor(col) is { } cast
+                            ? desc.SqlMarker(bare) + "::" + cast
+                            : desc.SqlMarker(bare));
                     }
                     groups.Add("(" + string.Join(", ", ps) + ")");
                 }

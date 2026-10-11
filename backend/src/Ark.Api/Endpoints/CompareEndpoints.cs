@@ -69,9 +69,7 @@ public static class CompareEndpoints
             var sel = srcReq.Tables.First(t => string.Equals(t.Table, table, StringComparison.OrdinalIgnoreCase));
             var tgtSchema = !string.IsNullOrWhiteSpace(srcReq.TargetSchema)
                 ? srcReq.TargetSchema
-                : target.Dialect == ArkDialect.PostgreSQL
-                    ? (string.IsNullOrEmpty(sel.Schema) ? "public" : sel.Schema)
-                    : null;
+                : Ark.Core.Metadata.Dialects.Get(target.Dialect).ResolveTargetSchema(source.Dialect, sel.Schema);
             var srcRef = new TableRef(srcReq.SourceDatabase, sel.Schema, sel.Table);
             var tgtRef = new TableRef(srcReq.TargetDatabase, tgtSchema, sel.Table);
             var srcMeta = await source.GetTableAsync(srcReq.SourceDatabase, sel.Schema, sel.Table, ct);

@@ -6,9 +6,17 @@ namespace Ark.Core.Metadata;
 
 public enum ArkDialect
 {
-    PostgreSQL,
-    MySQL,
-    SQLite,
+    // 注意：值按 ark.db 持久化（long），新方言只能追加在末尾，不得插入/重排。
+    PostgreSQL = 0,
+    MySQL = 1,
+    SQLite = 2,
+    MariaDB = 3,
+    SqlServer = 4,
+    ClickHouse = 5,
+    DuckDB = 6,
+    DM8 = 7,
+    KingbaseES = 8,
+    OpenGauss = 9,
 }
 
 public enum CanonicalTypeId

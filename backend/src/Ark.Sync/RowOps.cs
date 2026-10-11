@@ -52,33 +52,35 @@ public static class KeyCodec
     public static string KeysetAfter(IDbProvider p, IReadOnlyList<string> pkCols, string? afterKey, DbCommand cmd)
     {
         if (afterKey is null) return "";
-        return RangePredicate(p, pkCols, Decode(afterKey), ">", cmd, "@ka");
+        return RangePredicate(p, pkCols, Decode(afterKey), ">", cmd, "ka");
     }
 
     /// <summary>keyset 上界谓词：pk 元组 &lt;= upperKey。</summary>
     public static string KeysetUpper(IDbProvider p, IReadOnlyList<string> pkCols, string upperKey, DbCommand cmd) =>
-        RangePredicate(p, pkCols, Decode(upperKey), "<=", cmd, "@ku");
+        RangePredicate(p, pkCols, Decode(upperKey), "<=", cmd, "ku");
 
-    /// <summary>(a,b) &gt; (@a,@b) 形式的行值比较；单列退化为普通比较。</summary>
+    /// <summary>(a,b) &gt; (@a,@b) 形式的行值比较；单列退化为普通比较。参数标记按目标方言（位置 ? / @name）。</summary>
     public static string RangePredicate(
-        IDbProvider p, IReadOnlyList<string> pkCols, object?[] values, string op, DbCommand cmd, string prefix = "@ks")
+        IDbProvider p, IReadOnlyList<string> pkCols, object?[] values, string op, DbCommand cmd, string prefix = "ks")
     {
+        var d = Dialects.Get(p.Dialect);
         if (pkCols.Count == 1)
         {
             var param = cmd.CreateParameter();
-            param.ParameterName = $"{prefix}0";
+            param.ParameterName = d.MakeParamName($"{prefix}0");
             param.Value = CellValue.ToParam(values[0], p.Dialect);
             cmd.Parameters.Add(param);
-            return $"{p.Ddl.Quote(pkCols[0])} {op} {prefix}0";
+            return $"{p.Ddl.Quote(pkCols[0])} {op} {d.SqlMarker($"{prefix}0")}";
         }
         var ps = new List<string>();
         for (var i = 0; i < pkCols.Count; i++)
         {
             var param = cmd.CreateParameter();
-            param.ParameterName = $"{prefix}{i}";
+            var bare = $"{prefix}{i}";
+            param.ParameterName = d.MakeParamName(bare);
             param.Value = CellValue.ToParam(values[i], p.Dialect);
             cmd.Parameters.Add(param);
-            ps.Add(param.ParameterName);
+            ps.Add(d.SqlMarker(bare));
         }
         return $"({string.Join(", ", pkCols.Select(p.Ddl.Quote))}) {op} ({string.Join(", ", ps)})";
     }
@@ -91,16 +93,8 @@ public static class KeyCodec
 public static class RowOps
 {
     /// <summary>各方言多值 INSERT 的参数上限（预留安全余量）。</summary>
-    public static int MaxRowsPerBatch(ArkDialect dialect, int colCount)
-    {
-        var byDialect = dialect switch
-        {
-            ArkDialect.MySQL => 65000 / Math.Max(1, colCount),
-            ArkDialect.SQLite => 900 / Math.Max(1, colCount), // Microsoft.Data.Sqlite 兼容旧上限
-            _ => 65000 / Math.Max(1, colCount),
-        };
-        return Math.Max(1, byDialect);
-    }
+    public static int MaxRowsPerBatch(ArkDialect dialect, int colCount) =>
+        Math.Max(1, Dialects.Get(dialect).MaxBatchParams / Math.Max(1, colCount));
 
     /// <summary>批量插入；tx 为空时自建事务并提交。conflict=SkipExisting 时加 ON CONFLICT / INSERT IGNORE。</summary>
     public static async Task<long> InsertRowsAsync(
@@ -117,6 +111,7 @@ public static class RowOps
             await using var cmd = conn.CreateCommand();
             if (tx is not null) cmd.Transaction = tx;
             var colSql = string.Join(", ", colNames.Select(target.Ddl.Quote));
+            var d = Dialects.Get(target.Dialect);
             var groups = new List<string>(slice.Count);
             var pi = 0;
             foreach (var row in slice)
@@ -125,17 +120,19 @@ public static class RowOps
                 for (var c = 0; c < colNames.Count; c++)
                 {
                     var p = cmd.CreateParameter();
-                    p.ParameterName = $"@p{pi++}";
+                    var bare = $"p{pi++}";
+                    p.ParameterName = d.MakeParamName(bare);
                     p.Value = CellValue.ToParam(row[c], target.Dialect);
                     cmd.Parameters.Add(p);
-                    ps.Add(WithPgCast(target, p.ParameterName, targetCols, colNames[c]));
+                    ps.Add(WithPgCast(target, d.SqlMarker(bare), targetCols, colNames[c]));
                 }
                 groups.Add("(" + string.Join(", ", ps) + ")");
             }
             var conflictSql = conflict switch
             {
-                ConflictMode.SkipExisting when target.Dialect == ArkDialect.MySQL => " IGNORE",
-                ConflictMode.SkipExisting => " ON CONFLICT DO NOTHING",
+                // 目标方言不支持冲突子句（如 SQL Server/ClickHouse/DM8）时按普通 INSERT，
+                // 同步计划阶段由 SkipExistingClause 为空给出对应警告
+                ConflictMode.SkipExisting => Dialects.Get(target.Dialect).SkipExistingClause,
                 _ => "",
             };
             cmd.CommandText =
@@ -147,24 +144,26 @@ public static class RowOps
 
     /// <summary>按主键更新一行（仅更新非主键列）。</summary>
     public static async Task<long> UpdateRowAsync(
-        DbConnection conn, DbTransaction tx, IDbProvider target, TableRef t,
+        DbConnection conn, DbTransaction? tx, IDbProvider target, TableRef t,
         IReadOnlyList<string> pkCols, IReadOnlyList<string> colNames, IReadOnlyList<CanonicalColumn> targetCols,
         object?[] row, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.Transaction = tx;
+        if (tx is not null) cmd.Transaction = tx;
 
         var sets = new List<string>();
         var pi = 0;
+        var d = Dialects.Get(target.Dialect);
         for (var c = 0; c < colNames.Count; c++)
         {
             var col = colNames[c];
             if (pkCols.Contains(col, StringComparer.OrdinalIgnoreCase)) continue;
             var p = cmd.CreateParameter();
-            p.ParameterName = $"@u{pi++}";
+            var bare = $"u{pi++}";
+            p.ParameterName = d.MakeParamName(bare);
             p.Value = CellValue.ToParam(row[c], target.Dialect);
             cmd.Parameters.Add(p);
-            sets.Add($"{target.Ddl.Quote(col)} = {WithPgCast(target, p.ParameterName, targetCols, col)}");
+            sets.Add($"{target.Ddl.Quote(col)} = {WithPgCast(target, d.SqlMarker(bare), targetCols, col)}");
         }
         if (sets.Count == 0) return 0;
 
@@ -172,7 +171,8 @@ public static class RowOps
         foreach (var pk in pkCols)
         {
             var p = cmd.CreateParameter();
-            p.ParameterName = $"@w{whereParts.Count}";
+            var wBare = $"w{whereParts.Count}";
+            p.ParameterName = d.MakeParamName(wBare);
             var rowIdx = -1;
             for (var i = 0; i < colNames.Count; i++)
             {
@@ -180,47 +180,55 @@ public static class RowOps
             }
             p.Value = CellValue.ToParam(rowIdx >= 0 ? row[rowIdx] : null, target.Dialect);
             cmd.Parameters.Add(p);
-            whereParts.Add($"{target.Ddl.Quote(pk)} = {p.ParameterName}");
+            whereParts.Add($"{target.Ddl.Quote(pk)} = {d.SqlMarker(wBare)}");
         }
-        cmd.CommandText =
-            $"UPDATE {target.Ddl.TableName(t)} SET {string.Join(", ", sets)} WHERE {string.Join(" AND ", whereParts)}";
+        var where = string.Join(" AND ", whereParts);
+        // ClickHouse 等 mutation 方言：行级 UPDATE 走 ALTER TABLE ... UPDATE（异步生效，返回行数无意义）
+        cmd.CommandText = d.UsesAlterTableMutations
+            ? $"ALTER TABLE {target.Ddl.TableName(t)} UPDATE {string.Join(", ", sets)} WHERE {where}"
+            : $"UPDATE {target.Ddl.TableName(t)} SET {string.Join(", ", sets)} WHERE {where}";
         return await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>按键列表删除（IN / OR 组合，参数化）。</summary>
+    /// <summary>按键列表删除（IN / OR 组合，参数化）。mutation 方言走 ALTER TABLE ... DELETE。</summary>
     public static async Task<long> DeleteRowsAsync(
-        DbConnection conn, DbTransaction tx, IDbProvider target, TableRef t,
+        DbConnection conn, DbTransaction? tx, IDbProvider target, TableRef t,
         IReadOnlyList<string> pkCols, List<object?[]> keys, CancellationToken ct)
     {
         if (keys.Count == 0) return 0;
-        var chunkSize = Math.Max(1, 900 / Math.Max(1, pkCols.Count));
+        var d = Dialects.Get(target.Dialect);
+        var chunkSize = Math.Max(1, d.MaxBatchParams / Math.Max(1, pkCols.Count));
         long total = 0;
         for (var offset = 0; offset < keys.Count; offset += chunkSize)
         {
             var chunk = keys.Skip(offset).Take(chunkSize).ToList();
             await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
+            if (tx is not null) cmd.Transaction = tx;
             var where = BuildKeyInPredicate(target, pkCols, chunk, cmd);
-            cmd.CommandText = $"DELETE FROM {target.Ddl.TableName(t)} WHERE {where}";
+            cmd.CommandText = d.UsesAlterTableMutations
+                ? $"ALTER TABLE {target.Ddl.TableName(t)} DELETE WHERE {where}"
+                : $"DELETE FROM {target.Ddl.TableName(t)} WHERE {where}";
             total += await cmd.ExecuteNonQueryAsync(ct);
         }
         return total;
     }
 
-    /// <summary>主键 IN / OR 谓词（键值为 CLR 值）。</summary>
+    /// <summary>主键 IN / OR 谓词（键值为 CLR 值）。参数标记按目标方言。</summary>
     public static string BuildKeyInPredicate(
         IDbProvider target, IReadOnlyList<string> pkCols, List<object?[]> keys, DbCommand cmd)
     {
+        var d = Dialects.Get(target.Dialect);
         if (pkCols.Count == 1)
         {
             var ps = new List<string>();
             for (var i = 0; i < keys.Count; i++)
             {
                 var p = cmd.CreateParameter();
-                p.ParameterName = $"@k{i}";
+                var bare = $"k{i}";
+                p.ParameterName = d.MakeParamName(bare);
                 p.Value = CellValue.ToParam(keys[i][0], target.Dialect);
                 cmd.Parameters.Add(p);
-                ps.Add(p.ParameterName);
+                ps.Add(d.SqlMarker(bare));
             }
             return $"{target.Ddl.Quote(pkCols[0])} IN ({string.Join(", ", ps)})";
         }
@@ -231,23 +239,25 @@ public static class RowOps
             for (var c = 0; c < pkCols.Count; c++)
             {
                 var p = cmd.CreateParameter();
-                p.ParameterName = $"@k{ki}_{c}";
+                var bare = $"k{ki}_{c}";
+                p.ParameterName = d.MakeParamName(bare);
                 p.Value = CellValue.ToParam(keys[ki][c], target.Dialect);
                 cmd.Parameters.Add(p);
-                ands.Add($"{target.Ddl.Quote(pkCols[c])} = {p.ParameterName}");
+                ands.Add($"{target.Ddl.Quote(pkCols[c])} = {d.SqlMarker(bare)}");
             }
             parts.Add("(" + string.Join(" AND ", ands) + ")");
         }
         return string.Join(" OR ", parts);
     }
 
-    /// <summary>PostgreSQL：参数按目标列类型显式 cast（jsonb/timestamp 等不接受未知文本参数）。</summary>
+    /// <summary>PG 系方言：参数按目标列类型显式 cast（jsonb/timestamp 等不接受未知文本参数）。</summary>
     public static string WithPgCast(
         IDbProvider target, string paramName, IReadOnlyList<CanonicalColumn> targetCols, string colName)
     {
-        if (target.Dialect != ArkDialect.PostgreSQL) return paramName;
+        var castFor = Dialects.Get(target.Dialect).ParamCastFor;
+        if (castFor is null) return paramName;
         var col = targetCols.FirstOrDefault(c => string.Equals(c.Name, colName, StringComparison.OrdinalIgnoreCase));
-        if (col is null || Ark.Core.Typing.TypeMapper.PgCastFor(col) is not { } cast) return paramName;
+        if (col is null || castFor(col) is not { } cast) return paramName;
         return $"{paramName}::{cast}";
     }
 }

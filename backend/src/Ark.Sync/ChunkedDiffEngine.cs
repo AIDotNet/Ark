@@ -249,7 +249,10 @@ public sealed class ChunkedDiffEngine
     {
         if (!apply) return 0;
         if (inserts.Count + updates.Count + deletes.Count == 0) return 0;
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        // 无事务方言（ClickHouse）：直接执行，失败不回滚（能力由 DialectDescriptor 声明）
+        await using var tx = Dialects.Get(target.Dialect).SupportsTransactions
+            ? await conn.BeginTransactionAsync(ct)
+            : null;
         try
         {
             var n = 0L;
@@ -266,12 +269,12 @@ public sealed class ChunkedDiffEngine
             n += await RowOps.InsertRowsAsync(conn, tx, target, tgtRef, tgtCols, tgtConverted.Columns, inserts, ConflictMode.Error, ct);
             foreach (var row in updates)
                 n += await RowOps.UpdateRowAsync(conn, tx, target, tgtRef, pkTgt, tgtCols, tgtConverted.Columns, row, ct);
-            await tx.CommitAsync(ct);
+            if (tx is not null) await tx.CommitAsync(ct);
             return n;
         }
         catch
         {
-            await tx.RollbackAsync(CancellationToken.None);
+            if (tx is not null) await tx.RollbackAsync(CancellationToken.None);
             throw;
         }
     }
@@ -315,14 +318,14 @@ public sealed class ChunkedDiffEngine
                 " FROM " + p.Ddl.TableName(t) +
                 (after.Length > 0 || afterAndWhere.Length > 0 ? " WHERE " + (after.Length > 0 ? after : "1=1") + afterAndWhere : "") +
                 " ORDER BY " + string.Join(", ", pkCols.Select(p.Ddl.Quote)) +
-                $" LIMIT {limit}";
+                Dialects.Get(p.Dialect).PageClause(limit, 0);
         }
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
             var row = new object?[reader.FieldCount];
             reader.GetValues(row);
-            CellValue.NormalizeRow(row);
+            CellValue.NormalizeRow(row, p.Dialect);
             rows.Add(row);
         }
         return rows;
@@ -357,14 +360,14 @@ public sealed class ChunkedDiffEngine
                 " FROM " + p.Ddl.TableName(t) +
                 (conds.Count > 0 ? " WHERE " + string.Join(" AND ", conds) : "") +
                 " ORDER BY " + string.Join(", ", pkCols.Select(p.Ddl.Quote)) +
-                $" LIMIT {limit}";
+                Dialects.Get(p.Dialect).PageClause(limit, 0);
         }
         await using var reader = await cmd.ExecuteReaderAsync(ct);
         while (await reader.ReadAsync(ct))
         {
             var row = new object?[reader.FieldCount];
             reader.GetValues(row);
-            CellValue.NormalizeRow(row);
+            CellValue.NormalizeRow(row, p.Dialect);
             rows.Add(row);
         }
         return rows;

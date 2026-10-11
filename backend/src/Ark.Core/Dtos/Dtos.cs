@@ -37,10 +37,11 @@ public sealed class SaveConnectionRequest
 
     public void ValidateForDialect()
     {
-        if (Dialect == ArkDialect.SQLite)
+        var d = Dialects.Get(Dialect);
+        if (d.FileBased)
         {
             if (string.IsNullOrWhiteSpace(FilePath))
-                throw ArkException.Validation("SQLite 连接必须提供文件路径 FilePath");
+                throw ArkException.Validation($"{Dialect} 连接必须提供文件路径 FilePath");
         }
         else
         {

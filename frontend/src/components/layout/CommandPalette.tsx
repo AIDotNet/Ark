@@ -12,7 +12,8 @@ import {
   CommandSeparator,
 } from "@/components/ui/command"
 import { api } from "@/lib/api"
-import { defaultSchema } from "@/components/layout/ConnectionTree"
+import { defaultSchema } from "@/features/connections/dialects"
+import { firstDatabaseOf } from "@/features/connections/dialects"
 import { useWorkspace, type TabKind, type WorkspaceTab } from "@/stores/workspace"
 import type { ConnectionDto } from "@/types/api"
 
@@ -24,7 +25,7 @@ const TAB_ICONS: Record<TabKind, typeof Table2> = {
 }
 
 function firstDbOf(conn: ConnectionDto): string {
-  return conn.dialect === "SQLite" ? "main" : (conn.database ?? "")
+  return firstDatabaseOf(conn)
 }
 
 /** ⌘K 命令面板：切换标签页 / 全局操作 / 按连接新建查询 */

@@ -38,7 +38,7 @@ public static class Exporter
             ? " ORDER BY " + string.Join(", ", meta.PrimaryKeyColumns.Select(provider.Ddl.Quote))
             : "";
         var sql = "SELECT * FROM " + provider.Ddl.TableName(table) + order;
-        if (limit is > 0) sql += $" LIMIT {limit}";
+        if (limit is > 0) sql = Dialects.Get(provider.Dialect).ApplyRowLimit(sql, (int)Math.Min(limit.Value, int.MaxValue));
 
         await using var conn = await provider.OpenConnectionAsync(table.Database, ct);
         await using var cmd = conn.CreateCommand();
@@ -162,30 +162,44 @@ public static class Exporter
             ? "\"" + s.Replace("\"", "\"\"") + "\""
             : s;
 
-    private static string SqlLiteral(object? v, ArkDialect dialect) => v switch
+    private static string SqlLiteral(object? v, ArkDialect dialect)
     {
-        null => "NULL",
-        bool b => dialect == ArkDialect.SQLite ? (b ? "1" : "0") : (b ? "TRUE" : "FALSE"),
-        byte or sbyte or short or ushort or int or uint or long or ulong =>
-            Convert.ToInt64(v, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
-        float or double or decimal =>
-            Convert.ToString(Convert.ToDouble(v, CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) ?? "0",
-        byte[] bytes => dialect == ArkDialect.PostgreSQL
-            ? $"decode('{Convert.ToHexString(bytes).ToLowerInvariant()}', 'hex')"
-            : $"X'{Convert.ToHexString(bytes).ToLowerInvariant()}'",
-        DateTime dt => SqlString(dt.ToString("O", CultureInfo.InvariantCulture), dialect),
-        DateTimeOffset dto => SqlString(dto.ToString("O", CultureInfo.InvariantCulture), dialect),
-        Guid g => SqlString(g.ToString("D"), dialect),
-        _ => SqlString(v.ToString() ?? "", dialect),
-    };
+        var d = Dialects.Get(dialect);
+        return v switch
+        {
+            null => "NULL",
+            bool b => d.BoolAsOneZero ? (b ? "1" : "0") : (b ? "TRUE" : "FALSE"),
+            byte or sbyte or short or ushort or int or uint or long or ulong =>
+                Convert.ToInt64(v, CultureInfo.InvariantCulture).ToString(CultureInfo.InvariantCulture),
+            float or double or decimal =>
+                Convert.ToString(Convert.ToDouble(v, CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) ?? "0",
+            byte[] bytes => BinaryLiteral(bytes, d.BinaryFormat),
+            DateTime dt => SqlString(dt.ToString("O", CultureInfo.InvariantCulture), d),
+            DateTimeOffset dto => SqlString(dto.ToString("O", CultureInfo.InvariantCulture), d),
+            Guid g => SqlString(g.ToString("D"), d),
+            _ => SqlString(v.ToString() ?? "", d),
+        };
+    }
+
+    private static string BinaryLiteral(byte[] bytes, BinaryLiteralFormat fmt)
+    {
+        var hex = Convert.ToHexString(bytes).ToLowerInvariant();
+        return fmt switch
+        {
+            BinaryLiteralFormat.PgDecode => $"decode('{hex}', 'hex')",
+            BinaryLiteralFormat.SqlServerHex => $"0x{hex}",
+            BinaryLiteralFormat.Unhex => $"unhex('{hex}')",
+            _ => $"X'{hex}'",
+        };
+    }
 
     /// <summary>
     /// 字符串字面量。转义方言跟随导出源连接（dump 中的 INSERT 即按源方言书写）：
-    /// MySQL 默认 sql_mode 下反斜杠是转义字符，不翻倍会导致回放后数据静默损坏；Pg/SQLite 反斜杠为普通字符。
+    /// MySQL/ClickHouse 默认配置下反斜杠是转义字符，不翻倍会导致回放后数据静默损坏；Pg/SQLite 反斜杠为普通字符。
     /// </summary>
-    private static string SqlString(string s, ArkDialect dialect)
+    private static string SqlString(string s, DialectDescriptor d)
     {
-        var escaped = dialect == ArkDialect.MySQL ? s.Replace("\\", "\\\\") : s;
+        var escaped = d.BackslashEscapes ? s.Replace("\\", "\\\\") : s;
         return "'" + escaped.Replace("'", "''") + "'";
     }
 }

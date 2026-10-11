@@ -40,6 +40,7 @@ import { Resizable, ResizableHandle, ResizablePanel } from "@/components/ui/resi
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { api, ArkApiError } from "@/lib/api"
+import { dialectInfo } from "@/features/connections/dialects"
 import { cmTheme } from "@/features/query/editor-theme"
 import { ResultsGrid } from "@/features/query/ResultsGrid"
 import { AiMenu } from "@/features/query/AiMenu"
@@ -184,8 +185,7 @@ export function QueryConsole({
   })
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections })
   const dialect: Dialect = connections.data?.find((c) => c.id === connectionId)?.dialect ?? "MySQL"
-  const dialectKey: SqlLanguage =
-    dialect === "PostgreSQL" ? "postgresql" : dialect === "MySQL" ? "mysql" : "sqlite"
+  const dialectKey: SqlLanguage = dialectInfo(dialect).formatterLanguage
   const multiSchema = (schemas.data?.length ?? 0) > 1
 
   // 补全元数据（表 + 列，切库/schema 时刷新，长缓存）

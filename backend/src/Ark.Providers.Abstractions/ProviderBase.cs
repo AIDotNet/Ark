@@ -104,7 +104,7 @@ public abstract class ProviderBase : IDbProvider
             {
                 var row = new object?[reader.FieldCount];
                 reader.GetValues(row);
-                CellValue.NormalizeRow(row);
+                CellValue.NormalizeRow(row, Dialect);
                 rows.Add(row);
             }
             if (rows.Count >= maxRows)
@@ -223,7 +223,7 @@ public abstract class ProviderBase : IDbProvider
         cmd.CommandText = $"SELECT COUNT(*) FROM {Ddl.TableName(table)}{where}";
         var total = Convert.ToInt64(await cmd.ExecuteScalarAsync(ct));
 
-        cmd.CommandText = $"SELECT * FROM {Ddl.TableName(table)}{where}{order} LIMIT {query.Limit} OFFSET {query.Offset}";
+        cmd.CommandText = $"SELECT * FROM {Ddl.TableName(table)}{where}{order}{Ark.Core.Metadata.Dialects.Get(Dialect).PageClause(query.Limit, query.Offset)}";
         var cols = new List<QueryColumn>();
         var rows = new List<object?[]>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -233,7 +233,7 @@ public abstract class ProviderBase : IDbProvider
         {
             var row = new object?[reader.FieldCount];
             reader.GetValues(row);
-            CellValue.NormalizeRow(row);
+            CellValue.NormalizeRow(row, Dialect);
             rows.Add(row);
         }
         return new RowPage(cols, rows, total, query.Limit, query.Offset, meta.PrimaryKeyColumns);
@@ -265,10 +265,11 @@ public abstract class ProviderBase : IDbProvider
                     foreach (var v in f.Values ?? [])
                     {
                         var p = cmd.CreateParameter();
-                        p.ParameterName = $"@f{i++}";
+                        var bare = $"f{i++}";
+                        p.ParameterName = ParamName(bare);
                         p.Value = CellValue.ToParam(CellValue.FromJson(v, type), Dialect);
                         cmd.Parameters.Add(p);
-                        ps.Add(p.ParameterName);
+                        ps.Add(Marker(bare));
                     }
                     parts.Add(ps.Count == 0
                         ? "1=0"
@@ -292,10 +293,11 @@ public abstract class ProviderBase : IDbProvider
                     var val = CellValue.FromJson(raw, type);
                     if (f.Op is "like" or "not_like" && val is string s) val = $"%{s}%";
                     var p = cmd.CreateParameter();
-                    p.ParameterName = $"@f{i++}";
+                    var bare = $"f{i++}";
+                    p.ParameterName = ParamName(bare);
                     p.Value = CellValue.ToParam(val, Dialect);
                     cmd.Parameters.Add(p);
-                    parts.Add($"{col} {op} {p.ParameterName}");
+                    parts.Add($"{col} {op} {Marker(bare)}");
                     break;
                 }
             }
@@ -351,10 +353,11 @@ public abstract class ProviderBase : IDbProvider
         foreach (var c in cols)
         {
             var p = cmd.CreateParameter();
-            p.ParameterName = "@v" + ps.Count;
+            var bare = "v" + ps.Count;
+            p.ParameterName = ParamName(bare);
             p.Value = CellValue.ToParam(CellValue.FromJson(ins.Values[c], TypeOf(meta, c)), Dialect);
             cmd.Parameters.Add(p);
-            ps.Add(p.ParameterName);
+            ps.Add(Marker(bare));
         }
         cmd.CommandText = $"INSERT INTO {Ddl.TableName(table)} ({names}) VALUES ({string.Join(", ", ps)})";
         return await cmd.ExecuteNonQueryAsync(ct);
@@ -371,10 +374,11 @@ public abstract class ProviderBase : IDbProvider
             if (meta.PrimaryKeyColumns.Contains(col, StringComparer.OrdinalIgnoreCase)) continue;
             Identifier.EnsureValid(col, "列名");
             var p = cmd.CreateParameter();
-            p.ParameterName = "@s" + sets.Count;
+            var bare = "s" + sets.Count;
+            p.ParameterName = ParamName(bare);
             p.Value = CellValue.ToParam(CellValue.FromJson(v, TypeOf(meta, col)), Dialect);
             cmd.Parameters.Add(p);
-            sets.Add($"{Ddl.Quote(col)} = {p.ParameterName}");
+            sets.Add($"{Ddl.Quote(col)} = {Marker(bare)}");
         }
         var where = BuildKeyWhere(meta, upd.Key, cmd);
         if (sets.Count == 0 || where.Length == 0) return 0;
@@ -399,10 +403,11 @@ public abstract class ProviderBase : IDbProvider
         {
             Identifier.EnsureValid(col, "主键列名");
             var p = cmd.CreateParameter();
-            p.ParameterName = "@k" + parts.Count;
+            var bare = "k" + parts.Count;
+            p.ParameterName = ParamName(bare);
             p.Value = CellValue.ToParam(CellValue.FromJson(v, TypeOf(meta, col)), Dialect);
             cmd.Parameters.Add(p);
-            parts.Add($"{Ddl.Quote(col)} = {p.ParameterName}");
+            parts.Add($"{Ddl.Quote(col)} = {Marker(bare)}");
         }
         return string.Join(" AND ", parts);
     }
@@ -410,6 +415,12 @@ public abstract class ProviderBase : IDbProvider
     private static CanonicalType TypeOf(CanonicalTable meta, string column) =>
         meta.Columns.FirstOrDefault(c => string.Equals(c.Name, column, StringComparison.OrdinalIgnoreCase))?.Type
         ?? CanonicalType.Str;
+
+    /// <summary>驱动侧参数名（位置绑定方言为未命名，ClickHouse 为裸名，其余 "@f0"）。</summary>
+    private string ParamName(string bareName) => Ark.Core.Metadata.Dialects.Get(Dialect).MakeParamName(bareName);
+
+    /// <summary>SQL 占位标记：位置绑定方言（DM）返回 ?；ClickHouse 系 "@裸名"；其余 "@f0"。</summary>
+    private string Marker(string bareName) => Ark.Core.Metadata.Dialects.Get(Dialect).SqlMarker(bareName);
 
     // ------------------------------------------------ 估算行数 ------------------------------------------------
 
@@ -423,8 +434,8 @@ public abstract class ProviderBase : IDbProvider
 
     // ------------------------------------------------ 同步运行时（默认实现：不支持） ------------------------------------------------
 
-    /// <summary>批量装载期间的会话调优语句（写连接专用，同步前执行）。</summary>
-    public virtual IReadOnlyList<string> BulkLoadPragmas => [];
+    /// <summary>批量装载期间的会话调优语句（写连接专用，同步前执行）。默认取方言特征表。</summary>
+    public virtual IReadOnlyList<string> BulkLoadPragmas => Ark.Core.Metadata.Dialects.Get(Dialect).BulkLoadPragmas;
 
     public virtual Task<string?> GetViewDefinitionAsync(
         string database, string? schema, string view, CancellationToken ct = default) =>

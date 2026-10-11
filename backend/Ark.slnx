@@ -6,6 +6,13 @@
     <Project Path="src/Ark.Providers.MySQL/Ark.Providers.MySQL.csproj" />
     <Project Path="src/Ark.Providers.PostgreSQL/Ark.Providers.PostgreSQL.csproj" />
     <Project Path="src/Ark.Providers.SQLite/Ark.Providers.SQLite.csproj" />
+    <Project Path="src/Ark.Providers.MariaDB/Ark.Providers.MariaDB.csproj" />
+    <Project Path="src/Ark.Providers.SqlServer/Ark.Providers.SqlServer.csproj" />
+    <Project Path="src/Ark.Providers.ClickHouse/Ark.Providers.ClickHouse.csproj" />
+    <Project Path="src/Ark.Providers.DuckDB/Ark.Providers.DuckDB.csproj" />
+    <Project Path="src/Ark.Providers.KingbaseES/Ark.Providers.KingbaseES.csproj" />
+    <Project Path="src/Ark.Providers.OpenGauss/Ark.Providers.OpenGauss.csproj" />
+    <Project Path="src/Ark.Providers.DM8/Ark.Providers.DM8.csproj" />
     <Project Path="src/Ark.Sync/Ark.Sync.csproj" />
   </Folder>
   <Folder Name="/tests/">

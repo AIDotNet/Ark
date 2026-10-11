@@ -84,7 +84,7 @@ public static class TableEndpoints
         var tref = new TableRef(db, schema, table.Name);
         foreach (var idx in table.Indexes.Where(i => !i.IsPrimaryKey))
             statements.AddRange(p.Ddl.CreateIndex(idx, tref, table));
-        if (p.Dialect != ArkDialect.SQLite) // SQLite 的外键已内联在 CREATE TABLE 中
+        if (!p.Capabilities.InlineForeignKeys) // SQLite/DuckDB 系外键已内联在 CREATE TABLE 中
             foreach (var fk in table.ForeignKeys)
                 statements.AddRange(p.Ddl.CreateForeignKey(fk, tref));
         return statements;

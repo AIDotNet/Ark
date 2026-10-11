@@ -40,15 +40,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Collapse, Stagger, StaggerItem } from "@/components/ui/motion"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
-import type { ConnectionDto, Dialect } from "@/types/api"
+import type { ConnectionDto } from "@/types/api"
 import { ConnectionDialog } from "@/features/connections/ConnectionDialog"
 import { ImportExportDialog } from "@/features/io/ImportExportDialog"
-
-export function defaultSchema(dialect: Dialect, database: string): string {
-  if (dialect === "PostgreSQL") return "public"
-  if (dialect === "MySQL") return database
-  return "main"
-}
+import { defaultSchema, firstDatabaseOf, hasSchemas } from "@/features/connections/dialects"
 
 type PendingConfirm =
   | { type: "connection"; conn: ConnectionDto }
@@ -318,7 +313,7 @@ export function ConnectionTree() {
 }
 
 function firstDbOf(conn: ConnectionDto): string {
-  return conn.dialect === "SQLite" ? "main" : (conn.database ?? "")
+  return firstDatabaseOf(conn)
 }
 
 function ConnDatabases({
@@ -386,7 +381,7 @@ function ConnDatabases({
               </ContextMenuContent>
             </ContextMenu>
             <Collapse open={open}>
-              {conn.dialect === "PostgreSQL" ? (
+              {hasSchemas(conn.dialect) ? (
                 <ConnSchemas
                   conn={conn}
                   database={db.name}

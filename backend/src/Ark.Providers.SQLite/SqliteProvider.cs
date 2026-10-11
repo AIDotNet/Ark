@@ -20,7 +20,8 @@ public sealed class SqliteProvider : ProviderBase
     public override DbCapabilities Capabilities { get; } =
         new(SupportsSchemas: false, SupportsMultipleDatabases: false, SupportsTruncate: false,
             SupportsDropColumn: true, SupportsAlterColumnType: false, SupportsIndexConcurrently: false,
-            SupportsBulkCopy: true, SupportsConsistentSnapshot: true, ServerKind: "SQLite");
+            SupportsBulkCopy: true, SupportsConsistentSnapshot: true, ServerKind: "SQLite",
+            InlineForeignKeys: true);
 
     public override IDdlGenerator Ddl { get; } = new SqliteDdlGenerator();
 

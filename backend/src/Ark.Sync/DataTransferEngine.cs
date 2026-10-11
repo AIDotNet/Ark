@@ -242,7 +242,7 @@ public sealed class DataTransferEngine
 
     private static async Task ApplyPragmasAsync(IDbProvider target, DbConnection conn, bool on)
     {
-        var stmts = on ? target.BulkLoadPragmas : ResetPragmas(target.Dialect);
+        var stmts = on ? target.BulkLoadPragmas : Dialects.Get(target.Dialect).ResetPragmas;
         foreach (var s in stmts)
         {
             await using var cmd = conn.CreateCommand();
@@ -251,16 +251,6 @@ public sealed class DataTransferEngine
             catch { /* 调优语句失败不阻塞同步 */ }
         }
     }
-
-    private static IReadOnlyList<string> ResetPragmas(ArkDialect dialect) => dialect switch
-    {
-        // autocommit=1 提交遗留事务并释放 MDL：否则 AlignAutoIncrement 的 SELECT MAX 事务
-        // 会与缓存连接上的 ALTER TABLE AUTO_INCREMENT 互相等 MDL，直到 60s 命令超时
-        ArkDialect.MySQL => ["SET autocommit=1", "SET FOREIGN_KEY_CHECKS=1", "SET unique_checks=1"],
-        ArkDialect.PostgreSQL => ["SET synchronous_commit=on"],
-        ArkDialect.SQLite => ["PRAGMA foreign_keys=ON"],
-        _ => [],
-    };
 
     private static async Task<long?> ScalarMax(DbConnection conn, IDbProvider target, TableRef t, string pkCol, CancellationToken ct)
     {

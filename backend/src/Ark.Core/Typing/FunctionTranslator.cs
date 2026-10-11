@@ -27,6 +27,12 @@ public static partial class FunctionTranslator
             ArkDialect.PostgreSQL => RecognizePg(e),
             ArkDialect.MySQL => RecognizeMy(e),
             ArkDialect.SQLite => RecognizeSq(e),
+            ArkDialect.MariaDB => RecognizeMy(e),
+            ArkDialect.SqlServer => RecognizeMs(e),
+            ArkDialect.ClickHouse => RecognizeCh(e),
+            ArkDialect.DuckDB => RecognizeDk(e),
+            ArkDialect.DM8 => RecognizeDm(e),
+            ArkDialect.KingbaseES or ArkDialect.OpenGauss => RecognizePg(e),
             _ => ValueExprKind.Unrecognized,
         };
     }
@@ -62,6 +68,46 @@ public static partial class FunctionTranslator
         return ClassifyCommon(e);
     }
 
+    private static ValueExprKind RecognizeMs(string e)
+    {
+        if (e is "getdate()" or "getutcdate()" or "sysdatetime()" or "sysutcdatetime()" or "sysdatetimeoffset()")
+            return ValueExprKind.CurrentTimestamp;
+        if (e is "newid()" or "newsequentialid()") return ValueExprKind.UuidV4;
+        if (e.StartsWith("isnull(") || e.StartsWith("coalesce(")) return ValueExprKind.Coalesce;
+        if (HasTopLevelPlus(e)) return ValueExprKind.Concat;
+        return ClassifyCommon(e);
+    }
+
+    private static ValueExprKind RecognizeCh(string e)
+    {
+        if (e == "now()" || e.StartsWith("now64(") || e.StartsWith("now(")) return ValueExprKind.CurrentTimestamp;
+        if (e is "today()" or "currentdate()") return ValueExprKind.CurrentDate;
+        if (e is "generateuuidv4()" or "generateuuidv4(1)" or "uuid()") return ValueExprKind.UuidV4;
+        if (e.StartsWith("coalesce(") || e.StartsWith("ifnull(")) return ValueExprKind.Coalesce;
+        if (e.StartsWith("concat(") || e.StartsWith("concatwithseparator(")) return ValueExprKind.Concat;
+        if (HasTopLevelConcat(e)) return ValueExprKind.Concat;
+        return ClassifyCommon(e);
+    }
+
+    private static ValueExprKind RecognizeDk(string e)
+    {
+        if (e is "uuid()" or "gen_random_uuid()" or "newid()") return ValueExprKind.UuidV4;
+        if (e.StartsWith("coalesce(") || e.StartsWith("ifnull(") || e.StartsWith("nvl(")) return ValueExprKind.Coalesce;
+        if (e.StartsWith("concat(")) return ValueExprKind.Concat;
+        if (HasTopLevelConcat(e)) return ValueExprKind.Concat;
+        return ClassifyCommon(e);
+    }
+
+    private static ValueExprKind RecognizeDm(string e)
+    {
+        if (e is "sysdate" or "sysdatetime()" or "systimestamp" || e.StartsWith("systimestamp("))
+            return ValueExprKind.CurrentTimestamp;
+        if (e is "sys_guid()" or "sysguid()") return ValueExprKind.UuidV4;
+        if (e.StartsWith("nvl(") || e.StartsWith("coalesce(")) return ValueExprKind.Coalesce;
+        if (HasTopLevelConcat(e)) return ValueExprKind.Concat;
+        return ClassifyCommon(e);
+    }
+
     private static ValueExprKind ClassifyCommon(string e)
     {
         if (e.StartsWith("coalesce(")) return ValueExprKind.Coalesce;
@@ -77,7 +123,11 @@ public static partial class FunctionTranslator
         ValueExprKind.CurrentTimestamp => target switch
         {
             ArkDialect.PostgreSQL => "now()",
-            ArkDialect.MySQL => "CURRENT_TIMESTAMP",
+            ArkDialect.SqlServer => "SYSDATETIME()",
+            ArkDialect.ClickHouse => "now()",
+            ArkDialect.DM8 => "SYSDATE",
+            ArkDialect.DuckDB => "CURRENT_TIMESTAMP",
+            ArkDialect.KingbaseES or ArkDialect.OpenGauss => "now()",
             _ => "CURRENT_TIMESTAMP",
         },
         ValueExprKind.CurrentDate => "CURRENT_DATE",
@@ -86,7 +136,12 @@ public static partial class FunctionTranslator
         {
             ArkDialect.PostgreSQL => "gen_random_uuid()",
             ArkDialect.MySQL => "UUID()",
-            _ => null, // SQLite 无内置 UUID 函数 → 同步计划中报错提示
+            ArkDialect.MariaDB => "UUID()",
+            ArkDialect.SqlServer => "NEWID()",
+            ArkDialect.ClickHouse => "generateUUIDv4()",
+            ArkDialect.DuckDB => "uuid()",
+            ArkDialect.KingbaseES or ArkDialect.OpenGauss => "gen_random_uuid()",
+            _ => null, // SQLite/DM8 无等效内置函数 → 同步计划中报错提示
         },
         ValueExprKind.Coalesce => "COALESCE(" + string.Join(", ", SplitTopLevelArgs(ArgsOf(rawExpr))) + ")",
         ValueExprKind.Concat => ConcatFor(target, rawExpr),
@@ -119,7 +174,10 @@ public static partial class FunctionTranslator
                 return [op];
             })
             .ToList();
-        return target == ArkDialect.MySQL
+        // 这些方言优先 CONCAT() 函数形式（SQL Server 无 ||；ClickHouse/DuckDB/MySQL 系语义一致）；
+        // 其余（PG 系 / SQLite / DM8）用 ||
+        return target is ArkDialect.MySQL or ArkDialect.MariaDB or ArkDialect.SqlServer
+            or ArkDialect.ClickHouse or ArkDialect.DuckDB
             ? "CONCAT(" + string.Join(", ", operands) + ")"
             : string.Join(" || ", operands);
     }
@@ -211,6 +269,26 @@ public static partial class FunctionTranslator
                 case '(': depth++; break;
                 case ')': depth--; break;
                 case '|' when depth == 0 && i + 1 < e.Length && e[i + 1] == '|': return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>SQL Server 风格顶层 + 拼接（字符串操作数感知，忽略字符串与括号内的 +）。</summary>
+    private static bool HasTopLevelPlus(string e)
+    {
+        var depth = 0;
+        var inStr = false;
+        for (var i = 0; i < e.Length; i++)
+        {
+            var ch = e[i];
+            if (inStr) { if (ch == '\'') inStr = false; continue; }
+            switch (ch)
+            {
+                case '\'': inStr = true; break;
+                case '(': depth++; break;
+                case ')': depth--; break;
+                case '+' when depth == 0: return true;
             }
         }
         return false;

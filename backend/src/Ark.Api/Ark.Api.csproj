@@ -15,6 +15,13 @@
     <ProjectReference Include="..\Ark.Providers.PostgreSQL\Ark.Providers.PostgreSQL.csproj" />
     <ProjectReference Include="..\Ark.Providers.MySQL\Ark.Providers.MySQL.csproj" />
     <ProjectReference Include="..\Ark.Providers.SQLite\Ark.Providers.SQLite.csproj" />
+    <ProjectReference Include="..\Ark.Providers.MariaDB\Ark.Providers.MariaDB.csproj" />
+    <ProjectReference Include="..\Ark.Providers.SqlServer\Ark.Providers.SqlServer.csproj" />
+    <ProjectReference Include="..\Ark.Providers.ClickHouse\Ark.Providers.ClickHouse.csproj" />
+    <ProjectReference Include="..\Ark.Providers.DuckDB\Ark.Providers.DuckDB.csproj" />
+    <ProjectReference Include="..\Ark.Providers.KingbaseES\Ark.Providers.KingbaseES.csproj" />
+    <ProjectReference Include="..\Ark.Providers.OpenGauss\Ark.Providers.OpenGauss.csproj" />
+    <ProjectReference Include="..\Ark.Providers.DM8\Ark.Providers.DM8.csproj" />
     <ProjectReference Include="..\Ark.Sync\Ark.Sync.csproj" />
   </ItemGroup>
 </Project>

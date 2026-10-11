@@ -13,12 +13,22 @@
     <PackageReference Include="xunit.skippablefact" Version="1.5.23" />
     <PackageReference Include="Testcontainers.PostgreSql" Version="4.1.0" />
     <PackageReference Include="Testcontainers.MySql" Version="4.1.0" />
+    <PackageReference Include="Testcontainers.MariaDb" Version="4.1.0" />
+    <PackageReference Include="Testcontainers.MsSql" Version="4.1.0" />
+    <PackageReference Include="Testcontainers.ClickHouse" Version="4.1.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Ark.Core\Ark.Core.csproj" />
     <ProjectReference Include="..\..\src\Ark.Providers.PostgreSQL\Ark.Providers.PostgreSQL.csproj" />
     <ProjectReference Include="..\..\src\Ark.Providers.MySQL\Ark.Providers.MySQL.csproj" />
     <ProjectReference Include="..\..\src\Ark.Providers.SQLite\Ark.Providers.SQLite.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.MariaDB\Ark.Providers.MariaDB.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.SqlServer\Ark.Providers.SqlServer.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.ClickHouse\Ark.Providers.ClickHouse.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.DuckDB\Ark.Providers.DuckDB.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.KingbaseES\Ark.Providers.KingbaseES.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.OpenGauss\Ark.Providers.OpenGauss.csproj" />
+    <ProjectReference Include="..\..\src\Ark.Providers.DM8\Ark.Providers.DM8.csproj" />
     <ProjectReference Include="..\..\src\Ark.Sync\Ark.Sync.csproj" />
   </ItemGroup>
 </Project>
