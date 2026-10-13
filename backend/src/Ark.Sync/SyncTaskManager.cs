@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Threading.Channels;
 using Ark.Core.Errors;
 using Ark.Core.Metadata;
 using Ark.Core.Sync;
@@ -22,7 +23,69 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
     /// <summary>表级并行分支写 state.Log/Reports 的互斥锁（普通 List 非线程安全，输出顺序不保证）。</summary>
     private readonly object _stateLock = new();
 
+    /// <summary>SSE 变更信号：任务 id → 订阅者 → 有界通道（容量 1，多余信号合并丢弃，唤醒即取最新快照）。</summary>
+    private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<long, Channel<bool>>> _signals = new();
+    private long _signalSeq;
+
     private SemaphoreSlim PersistLock(Guid id) => _persistLocks.GetOrAdd(id, _ => new SemaphoreSlim(1, 1));
+
+    /// <summary>订阅任务变更信号（SSE 即时推送用）；Dispose 解除订阅并唤醒等待方。</summary>
+    public Subscription Subscribe(Guid taskId)
+    {
+        var ch = Channel.CreateBounded<bool>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
+        var subs = _signals.GetOrAdd(taskId, _ => new ConcurrentDictionary<long, Channel<bool>>());
+        var id = Interlocked.Increment(ref _signalSeq);
+        subs[id] = ch;
+        return new Subscription(this, taskId, id, ch);
+    }
+
+    public sealed class Subscription(SyncTaskManager mgr, Guid taskId, long id, Channel<bool> channel) : IDisposable
+    {
+        private int _disposed;
+
+        /// <summary>等待下一次变更/关闭信号；客户端取消时立即完成。</summary>
+        public async Task WhenChangedAsync(CancellationToken ct)
+        {
+            try
+            {
+                await channel.Reader.ReadAsync(ct);
+            }
+            catch (OperationCanceledException) { }
+            catch (ChannelClosedException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            if (mgr._signals.TryGetValue(taskId, out var subs))
+            {
+                subs.TryRemove(id, out _);
+                if (subs.IsEmpty) mgr._signals.TryRemove(taskId, out _);
+            }
+            channel.Writer.TryComplete();
+        }
+    }
+
+    /// <summary>向该任务的所有 SSE 订阅者发变更信号（TryWrite：无订阅者或满时静默丢弃）。</summary>
+    private void Notify(Guid taskId)
+    {
+        if (_signals.TryGetValue(taskId, out var subs))
+            foreach (var ch in subs.Values) ch.Writer.TryWrite(true);
+    }
+
+    /// <summary>
+    /// 取任务 DTO 快照：运行态在状态锁内枚举 Log/Reports（并行写入下枚举安全），否则回退持久化存储。
+    /// </summary>
+    public async Task<(object Dto, SyncTaskStatus Status)?> GetDtoAsync(Guid id, CancellationToken ct = default)
+    {
+        if (_runs.TryGetValue(id, out var h))
+        {
+            lock (_stateLock) return (h.State.ToDto(), h.State.Status);
+        }
+        var stored = await store.GetTaskAsync(id, ct);
+        return stored is null ? null : (stored.State.ToDto(), stored.State.Status);
+    }
 
     private sealed class RunHandle
     {
@@ -151,6 +214,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             h.State.Message = "取消中（等待当前块/批结束）…";
             h.Cts.Cancel();
             _ = PersistNowAsync(h.State);
+            Notify(id);
         }
     }
 
@@ -282,6 +346,9 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             await PersistNowAsync(state);
             _runs.TryRemove(state.Id, out _);
             _persistLocks.TryRemove(state.Id, out _);
+            // 唤醒并释放所有 SSE 订阅者（其后再收到一次快照即见终态退出）
+            if (_signals.TryRemove(state.Id, out var subs))
+                foreach (var ch in subs.Values) ch.Writer.TryComplete();
             _gate.Release();
         }
     }
@@ -460,6 +527,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
         var table = te.Target.Table;
         state.CurrentTable = table;
         state.Message = $"处理 {table}";
+        Notify(state.Id);
         long ins = 0, upd = 0, del = 0;
         var ddlOk = 0;
         var ddlFail = 0;
@@ -756,11 +824,13 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
     private void AddLog(SyncTaskState state, string message)
     {
         lock (_stateLock) state.Log.Add(message);
+        Notify(state.Id);
     }
 
     private void AddReport(SyncTaskState state, TableSyncReport report)
     {
         lock (_stateLock) state.Reports.Add(report);
+        Notify(state.Id);
     }
 
     private long SumReports(SyncTaskState state, Func<TableSyncReport, long> selector)
@@ -778,6 +848,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
     private void MarkDirty(SyncTaskState state)
     {
         if (!_runs.TryGetValue(state.Id, out var h)) return;
+        Notify(state.Id);
         if (!h.TryClaimPersistSlot()) return;
         _ = Task.Run(async () =>
         {

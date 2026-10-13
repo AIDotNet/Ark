@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using Ark.Api.Infrastructure;
 using Ark.Core.Errors;
 using Ark.Core.Sync;
@@ -29,44 +30,65 @@ public static class SyncApi
 
     public static readonly JsonSerializerOptions JsonOpts = ArkSyncStore.JsonOpts;
 
-    /// <summary>SSE 推送任务状态直到终态或客户端断开。</summary>
+    /// <summary>
+    /// SSE 推送任务状态直到终态或客户端断开。
+    /// 事件驱动：任务线程每次写日志/进度即发信号唤醒本推送循环（不再轮询），
+    /// 150ms 合并窗口聚合并行表分支的连续信号，空闲 15s 发心跳注释防中间层闲置断连。
+    /// </summary>
     public static async Task PumpTaskEventsAsync(HttpContext http, SyncTaskManager mgr, Guid taskId, CancellationToken ct)
     {
         http.Response.ContentType = "text/event-stream";
         http.Response.Headers.CacheControl = "no-cache";
-        var last = -1;
-        while (!ct.IsCancellationRequested && !http.RequestAborted.IsCancellationRequested)
+        http.Response.Headers["X-Accel-Buffering"] = "no";
+        await http.Response.WriteAsync("retry: 2000\n\n", ct);
+        await http.Response.Body.FlushAsync(ct);
+
+        using var sub = mgr.Subscribe(taskId);
+        string? lastJson = null;
+        try
         {
-            var stored = await mgr.GetStoredAsync(taskId, ct);
-            if (stored is null)
+            while (!ct.IsCancellationRequested && !http.RequestAborted.IsCancellationRequested)
             {
-                await http.Response.WriteAsync($"event: error\ndata: task {taskId} not found\n\n", ct);
-                break;
-            }
-            var hash = HashState(stored.State);
-            if (hash != last)
-            {
-                last = hash;
-                var json = JsonSerializer.Serialize(stored.State.ToDto(), JsonOpts);
-                await http.Response.WriteAsync($"event: state\ndata: {json}\n\n", ct);
-                await http.Response.Body.FlushAsync(ct);
-            }
-            if (stored.State.Status is SyncTaskStatus.Completed or SyncTaskStatus.Failed
-                or SyncTaskStatus.Cancelled or SyncTaskStatus.PartiallyFailed or SyncTaskStatus.Interrupted)
-                break;
-            try
-            {
-                await Task.Delay(700, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                var snap = await mgr.GetDtoAsync(taskId, ct);
+                if (snap is null)
+                {
+                    await http.Response.WriteAsync($"event: error\ndata: task {taskId} not found\n\n", ct);
+                    break;
+                }
+                var json = JsonSerializer.Serialize(snap.Value.Dto, JsonOpts);
+                if (json != lastJson)
+                {
+                    lastJson = json;
+                    await http.Response.WriteAsync($"event: state\ndata: {json}\n\n", ct);
+                    await http.Response.Body.FlushAsync(ct);
+                }
+                if (snap.Value.Status is SyncTaskStatus.Completed or SyncTaskStatus.Failed
+                    or SyncTaskStatus.Cancelled or SyncTaskStatus.PartiallyFailed or SyncTaskStatus.Interrupted)
+                    break;
+
+                var heartbeat = Task.Delay(15000, ct);
+                var signal = sub.WhenChangedAsync(ct);
+                if (await Task.WhenAny(signal, heartbeat) == heartbeat)
+                {
+                    await http.Response.WriteAsync(": ping\n\n", ct);
+                    await http.Response.Body.FlushAsync(ct);
+                }
+                else
+                {
+                    // 合并窗口：并行表分支的连续信号聚齐后再取快照，避免逐帧全量推送
+                    await Task.Delay(150, ct);
+                }
             }
         }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开或服务停机
+        }
+        catch (ChannelClosedException)
+        {
+            // 任务结束清理信号通道
+        }
     }
-
-    private static int HashState(SyncTaskState s) =>
-        HashCode.Combine(s.Status, s.Percent, s.CurrentTable, s.Message, s.Reports.Count, s.RowsDone, s.Log.Count);
 
     /// <summary>导出执行计划中实际执行的 SQL 为脚本。</summary>
     public static string BuildScript(ExecutionPlan plan, ISet<string> skipActionIds, bool confirmDestructive)

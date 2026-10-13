@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { AnimatePresence, motion } from "motion/react"
+import { motion } from "motion/react"
 import { ArrowRight, Check, ChevronDown, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -28,7 +28,7 @@ import { Switch } from "@/components/ui/switch"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
 import { defaultSchema } from "@/features/connections/dialects"
-import { Collapse, springSoft, stepTransition, stepVariants } from "@/components/ui/motion"
+import { Collapse, springSoft, stepTransition } from "@/components/ui/motion"
 import { CronField } from "@/features/sync/CronField"
 import { CompareResultView } from "@/features/sync/CompareViews"
 import { TaskRunView } from "@/features/sync/TaskViews"
@@ -355,7 +355,8 @@ export function NewSyncFlow({
   return (
     <>
       <Dialog open={open} onOpenChange={(v) => { if (!v) requestClose() }}>
-        <DialogContent className="flex max-h-[92vh] max-w-3xl flex-col overflow-hidden">
+        {/* sm: 前缀必须带：基类是 sm:max-w-lg，无前缀的 max-w-3xl 在 CSS 中排在其前会被压回 32rem */}
+        <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>{isEditing ? "编辑同步配置" : "新建同步"}</DialogTitle>
             <DialogDescription>
@@ -401,18 +402,16 @@ export function NewSyncFlow({
           </div>
 
           <ScrollArea className="min-h-0 flex-1 pr-2">
-            {/* mode="wait"：旧步骤先滑出，新步骤再滑入，方向由 go() 决定 */}
-            <AnimatePresence mode="wait" custom={stepDir} initial={false}>
-              <motion.div
-                key={step}
-                custom={stepDir}
-                variants={stepVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={stepTransition}
-                className="space-y-4 pb-1"
-              >
+            {/* 步骤切换只做进场动画：AnimatePresence mode="wait" 依赖退场动画完成才挂载新步骤，
+                在复杂步骤子树（Collapse/Select/长列表）上退场有概率永不完成，整个向导冻死在旧步骤
+                （实测：点「生成同步计划」后底部按钮全部失效）。改为 key 换载 + 进场滑动，旧步骤立即卸载。 */}
+            <motion.div
+              key={step}
+              initial={{ opacity: 0, x: stepDir >= 0 ? 36 : -36 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={stepTransition}
+              className="space-y-4 pb-1"
+            >
               {/* Step 0：源与目标 */}
               {step === 0 && (
                 <>
@@ -643,8 +642,7 @@ export function NewSyncFlow({
 
               {/* Step 3：执行 */}
               {step === 3 && taskId && <TaskRunView taskId={taskId} onRunningChange={setTaskRunning} />}
-              </motion.div>
-            </AnimatePresence>
+            </motion.div>
           </ScrollArea>
 
           {/* 固定底部操作栏：始终可见，不随内容滚动 */}
@@ -853,7 +851,7 @@ function TablePicker({
   )
 }
 
-/** 计划审阅：按表分组的动作树（SQL 可展开）。 */
+/** 计划审阅：每表一行的紧凑列表（默认折叠，展开看动作/SQL/警告），错误与缺依赖始终可见。 */
 export function PlanReview({
   plan,
   skipped,
@@ -863,89 +861,116 @@ export function PlanReview({
   skipped: Set<string>
   onToggle: (id: string, on: boolean) => void
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [openTable, setOpenTable] = useState<string | null>(null)
+  const [sqlOpen, setSqlOpen] = useState<string | null>(null)
   return (
-    <div className="space-y-2">
-      {plan.tables.map((tp) => (
-        <div key={tp.target.table} className="rounded-lg border p-3">
-          <div className="mb-1 flex items-center gap-2 text-sm font-medium">
-            {tp.target.table}
-            {tp.targetTableExists ? <Badge variant="secondary" className="text-[10px]">已存在（Diff）</Badge> : <Badge className="text-[10px]">新建</Badge>}
-            {tp.data && (
-              <Badge variant="outline" className="text-[10px]">
-                {tp.data.effectiveMethod === "RowDiff" ? "Diff" : "全量"} ≈{tp.data.estimatedRows ?? "?"} 行
-                {tp.data.conflictMode !== "Error" && ` · ${tp.data.conflictMode === "Truncate" ? "先清空" : "跳过已存在"}`}
-                {!tp.data.hasPrimaryKey && " · 无主键"}
-              </Badge>
-            )}
-            {tp.postCopyActions.length > 0 && (
-              <Badge variant="outline" className="text-[10px]">索引后建 {tp.postCopyActions.length}</Badge>
-            )}
+    <div className="overflow-hidden rounded-lg border">
+      {plan.tables.map((tp, idx) => {
+        const actions = [...tp.structureActions, ...tp.postCopyActions]
+        const destructive = actions.filter((a) => a.isDestructive).length
+        const warningCount =
+          tp.conversionIssues.filter((i) => i.severity === "warning").length +
+          actions.reduce((s, a) => s + a.warnings.length, 0)
+        // 错误级问题不进折叠区：多表浏览时也必须一眼看到阻塞项
+        const errors = [
+          ...tp.conversionIssues.filter((i) => i.severity === "error").map((i) => i.message),
+          ...tp.extensions.filter((x) => !x.present).map((x) => `缺少依赖：${x.name}${x.note ? `（${x.note}）` : ""}`),
+        ]
+        const open = openTable === tp.target.table
+        return (
+          <div key={tp.target.table} className={idx > 0 ? "border-t" : ""}>
+            <button
+              type="button"
+              onClick={() => setOpenTable(open ? null : tp.target.table)}
+              className={`flex w-full items-center gap-2 px-2.5 py-2 text-left text-sm transition-colors duration-150 hover:bg-accent/40 ${
+                open ? "bg-accent/30" : ""
+              }`}
+            >
+              <ChevronDown className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${open ? "" : "-rotate-90"}`} />
+              <span className="min-w-0 truncate font-medium">{tp.target.table}</span>
+              {tp.targetTableExists ? <Badge variant="secondary" className="shrink-0 text-[10px]">已存在</Badge> : <Badge className="shrink-0 text-[10px]">新建</Badge>}
+              {tp.data && (
+                <Badge variant="outline" className="shrink-0 text-[10px]">
+                  {tp.data.effectiveMethod === "RowDiff" ? "Diff" : "全量"} ≈{tp.data.estimatedRows ?? "?"} 行
+                </Badge>
+              )}
+              {destructive > 0 && <Badge variant="destructive" className="shrink-0 text-[10px]">破坏性 {destructive}</Badge>}
+              {warningCount > 0 && (
+                <Badge variant="outline" className="shrink-0 text-[10px] text-amber-600 dark:text-amber-400">警告 {warningCount}</Badge>
+              )}
+              <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground">{actions.length} 项变更</span>
+            </button>
+            {errors.map((e, k) => (
+              <div key={k} className="flex items-start gap-1.5 px-2.5 pb-1.5 text-[11px] text-destructive">
+                <CircleAlert className="mt-0.5 size-3 shrink-0" />
+                <span className="min-w-0">{e}</span>
+              </div>
+            ))}
+            <Collapse open={open}>
+              <div className="space-y-1 px-2.5 pb-2.5">
+                {tp.conversionIssues.filter((i) => i.severity === "warning").map((i, k) => (
+                  <div key={k} className="flex items-start gap-1.5 text-[11px] text-amber-600 dark:text-amber-400">
+                    <TriangleAlert className="mt-0.5 size-3 shrink-0" />
+                    <span className="min-w-0">{i.message}</span>
+                  </div>
+                ))}
+                {tp.conversionIssues.filter((i) => i.severity === "hint").map((i, k) => (
+                  <div key={k} className="rounded border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
+                    ⓘ {i.message}
+                  </div>
+                ))}
+                {tp.extensions.filter((x) => !x.present).map((x, k) => (
+                  <div key={k} className="rounded border border-dashed px-2 py-1 text-[11px]">
+                    <span className="text-destructive">缺少依赖：{x.name}{x.note ? `（${x.note}）` : ""}</span>
+                    {x.installSql && (
+                      <pre className="mt-1 overflow-auto rounded bg-muted p-1.5 font-mono text-[10px] leading-4">{x.installSql}</pre>
+                    )}
+                  </div>
+                ))}
+                {actions.map((a) => {
+                  const on = !skipped.has(a.id)
+                  return (
+                    <div key={a.id} className="rounded">
+                      <label className="flex items-start gap-2 rounded px-1 py-1 text-xs hover:bg-accent/40">
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={on}
+                          onCheckedChange={(v) => onToggle(a.id, !!v)}
+                        />
+                        <span className="min-w-0">
+                          <Badge variant={a.isDestructive ? "destructive" : "secondary"} className="mr-1 text-[10px]">
+                            {a.kind}
+                          </Badge>
+                          {a.summary}
+                          {a.warnings.map((w, k) => (
+                            <span key={k} className="ml-1 text-amber-600 dark:text-amber-400">⚠{w}</span>
+                          ))}
+                          <button
+                            type="button"
+                            className="ml-2 text-[10px] text-muted-foreground underline"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              setSqlOpen(sqlOpen === a.id ? null : a.id)
+                            }}
+                          >
+                            {sqlOpen === a.id ? "收起 SQL" : "SQL"}
+                          </button>
+                        </span>
+                      </label>
+                      <Collapse open={sqlOpen === a.id}>
+                        <pre className="mx-6 my-1 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-5">{a.sql}</pre>
+                      </Collapse>
+                    </div>
+                  )
+                })}
+                {actions.length === 0 && (
+                  <div className="px-2 py-1 text-xs text-muted-foreground">结构一致，无需变更</div>
+                )}
+              </div>
+            </Collapse>
           </div>
-          {tp.conversionIssues.filter((i) => i.severity === "error").map((i, k) => (
-            <Alert key={k} variant="destructive" className="mb-1">
-              <CircleAlert />
-              <AlertDescription className="text-xs">{i.message}</AlertDescription>
-            </Alert>
-          ))}
-          {tp.conversionIssues.filter((i) => i.severity === "warning").map((i, k) => (
-            <Alert key={k} variant="warning" className="mb-1">
-              <TriangleAlert />
-              <AlertDescription className="text-xs">{i.message}</AlertDescription>
-            </Alert>
-          ))}
-          {tp.conversionIssues.filter((i) => i.severity === "hint").map((i, k) => (
-            <div key={k} className="rounded border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
-              ⓘ {i.message}
-            </div>
-          ))}
-          {tp.extensions.filter((x) => !x.present).map((x, k) => (
-            <Alert key={k} variant="destructive" className="mb-1">
-              <CircleAlert />
-              <AlertTitle className="text-xs">缺少依赖：{x.name}{x.note ? `（${x.note}）` : ""}</AlertTitle>
-              {x.installSql && <AlertDescription className="font-mono text-xs">{x.installSql}</AlertDescription>}
-            </Alert>
-          ))}
-          <div className="space-y-1">
-            {[...tp.structureActions, ...tp.postCopyActions].map((a) => {
-              const on = !skipped.has(a.id)
-              return (
-                <div key={a.id} className="rounded px-1">
-                  <label className="flex items-start gap-2 rounded px-1 py-1 text-xs hover:bg-accent/40">
-                    <Checkbox
-                      className="mt-0.5"
-                      checked={on}
-                      onCheckedChange={(v) => onToggle(a.id, !!v)}
-                    />
-                    <span>
-                      <Badge variant={a.isDestructive ? "destructive" : "secondary"} className="mr-1 text-[10px]">
-                        {a.kind}
-                      </Badge>
-                      {a.summary}
-                      {a.warnings.map((w, k) => (
-                        <span key={k} className="ml-1 text-amber-600 dark:text-amber-400">⚠{w}</span>
-                      ))}
-                      <button
-                        type="button"
-                        className="ml-2 text-[10px] text-muted-foreground underline"
-                        onClick={() => setExpanded(expanded === a.id ? null : a.id)}
-                      >
-                        {expanded === a.id ? "收起 SQL" : "SQL"}
-                      </button>
-                    </span>
-                  </label>
-                  <Collapse open={expanded === a.id}>
-                    <pre className="mx-6 my-1 overflow-auto rounded bg-muted p-2 font-mono text-[11px] leading-5">{a.sql}</pre>
-                  </Collapse>
-                </div>
-              )
-            })}
-            {tp.structureActions.length + tp.postCopyActions.length === 0 && (
-              <div className="px-2 py-1 text-xs text-muted-foreground">结构一致，无需变更</div>
-            )}
-          </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
