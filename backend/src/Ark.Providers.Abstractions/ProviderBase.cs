@@ -66,6 +66,7 @@ public abstract class ProviderBase : IDbProvider
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.CommandText = s;
+                cmd.CommandTimeout = 0; // DDL 不设超时（CREATE INDEX 等耗时操作）
                 await cmd.ExecuteNonQueryAsync(ct);
                 executed++;
             }

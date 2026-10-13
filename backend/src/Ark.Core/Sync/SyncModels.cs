@@ -8,6 +8,8 @@ public enum SyncMode
 {
     StructureOnly,
     StructureAndData,
+    /// <summary>仅数据：目标表存在时不动结构只复制数据；目标表缺失时自动建表再复制。</summary>
+    DataOnly,
 }
 
 public enum DataSyncMethod

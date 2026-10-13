@@ -38,7 +38,6 @@ public sealed class SqlServerProvider : ProviderBase
             // 容器/自签证书环境必须 Encrypt=Optional，强制加密会握手失败
             Encrypt = SqlConnectionEncryptOption.Optional,
             TrustServerCertificate = true,
-            ConnectTimeout = 15,
         };
         return new SqlConnection(b.ConnectionString);
     }

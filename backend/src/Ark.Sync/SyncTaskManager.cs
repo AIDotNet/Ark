@@ -23,6 +23,13 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
     /// <summary>表级并行分支写 state.Log/Reports 的互斥锁（普通 List 非线程安全，输出顺序不保证）。</summary>
     private readonly object _stateLock = new();
 
+    /// <summary>快照会话可变引用：表级失败可能毒化快照事务（如 PG 25P02 后同事务全部报错），层边界需可替换重建。</summary>
+    private sealed class SnapshotRef
+    {
+        public ISnapshotSession? Session;
+        public SemaphoreSlim? Gate;
+    }
+
     /// <summary>SSE 变更信号：任务 id → 订阅者 → 有界通道（容量 1，多余信号合并丢弃，唤醒即取最新快照）。</summary>
     private readonly ConcurrentDictionary<Guid, ConcurrentDictionary<long, Channel<bool>>> _signals = new();
     private long _signalSeq;
@@ -266,14 +273,13 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
 
             // 源端一致快照（方言不支持时降级为普通读并记录）
             var snapDb = state.Plan?.Options.SourceDatabase ?? state.CompareRequestRef?.SourceDatabase ?? "";
-            ISnapshotSession? snapshot = null;
-            SemaphoreSlim? snapshotGate = null;
+            var snap = new SnapshotRef();
             try
             {
-                snapshot = await source.BeginSnapshotAsync(snapDb, ct);
+                snap.Session = await source.BeginSnapshotAsync(snapDb, ct);
                 // 快照会话是单条物理连接：多表并行时源端读必须互斥（表级并行保留，写目标各自连接不受限）
-                snapshotGate = new SemaphoreSlim(1, 1);
-                state.Log.Add($"源端快照: {snapshot.Description}");
+                snap.Gate = new SemaphoreSlim(1, 1);
+                state.Log.Add($"源端快照: {snap.Session.Description}");
             }
             catch (Exception ex) when (ex is NotSupportedException or ArkException)
             {
@@ -304,12 +310,12 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             {
                 if (state.Kind == TaskKind.Sync && state.Plan is not null && state.Request is not null)
                 {
-                    await RunSyncCoreAsync(state, state.Plan, state.Request, checkpoint, source, target, snapshot, snapshotGate, sw, ct,
+                    await RunSyncCoreAsync(state, state.Plan, state.Request, checkpoint, source, target, snap, sw, ct,
                         sourceSpec, targetSpec, factory);
                 }
                 else if (state.Kind == TaskKind.Compare && state.CompareRequestRef is not null)
                 {
-                    await RunCompareCoreAsync(state, state.CompareRequestRef, source, target, snapshot, snapshotGate, sw, ct);
+                    await RunCompareCoreAsync(state, state.CompareRequestRef, source, target, snap, sw, ct);
                 }
                 else
                 {
@@ -326,8 +332,8 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
             }
             finally
             {
-                if (snapshot is not null) await snapshot.DisposeAsync();
-                snapshotGate?.Dispose();
+                if (snap.Session is not null) await snap.Session.DisposeAsync();
+                snap.Gate?.Dispose();
             }
         }
         catch (OperationCanceledException)
@@ -364,7 +370,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
 
     private async Task RunSyncCoreAsync(
         SyncTaskState state, ExecutionPlan plan, SyncExecuteRequest req, SyncCheckpoint checkpoint,
-        IDbProvider source, IDbProvider target, ISnapshotSession? snapshot, SemaphoreSlim? snapshotGate,
+        IDbProvider source, IDbProvider target, SnapshotRef snap,
         Stopwatch sw, CancellationToken ct,
         ConnectionSpec sourceSpec, ConnectionSpec targetSpec, Func<ConnectionSpec, IDbProvider> factory)
     {
@@ -440,6 +446,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
 
         foreach (var layer in layers)
         {
+            var reportCountBefore = state.Reports.Count;
             var parallel = new ParallelOptions
             {
                 MaxDegreeOfParallelism = Math.Max(1, plan.Options.MaxParallelTables),
@@ -456,7 +463,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                 // 每张表独立的 Provider 实例：避免并行分支共享缓存的 DbConnection
                 await using var tSrc = factory(sourceSpec);
                 await using var tTgt = factory(targetSpec);
-                await ExecuteTableAsync(state, req, te, tSrc, tTgt, engine, snapshot, snapshotGate,
+                await ExecuteTableAsync(state, req, te, tSrc, tTgt, engine, snap,
                     isCheckpointTable ? checkpoint.LastKey : null,
                     checkpoint.CompletedActionIds,
                     truncateDone.Contains(te.Source.Table),
@@ -464,17 +471,42 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                 state.Percent = Math.Round(ReportCount(state) * 100.0 / Math.Max(1, plan.Tables.Count), 1);
                 await PersistNowAsync(state, ict);
             });
+
+            // 层内有表失败：快照事务可能已被毒化（PG 25P02：同事务后续命令全部报错），重建后继续其余表
+            await RecoverSnapshotIfFailedAsync(state, source, req.Plan.Options.SourceDatabase, snap,
+                state.Reports.Skip(reportCountBefore).Any(r => r.Error is not null));
         }
 
         foreach (var view in viewExecs)
         {
             ct.ThrowIfCancellationRequested();
+            var reportCountBefore = state.Reports.Count;
             await using var vSrc = factory(sourceSpec);
             await using var vTgt = factory(targetSpec);
-            await ExecuteTableAsync(state, req, view, vSrc, vTgt, engine, snapshot, snapshotGate, null,
+            await ExecuteTableAsync(state, req, view, vSrc, vTgt, engine, snap, null,
                 checkpoint.CompletedActionIds, false, ct);
             state.Percent = Math.Round(ReportCount(state) * 100.0 / Math.Max(1, plan.Tables.Count), 1);
             await PersistNowAsync(state, ct);
+            await RecoverSnapshotIfFailedAsync(state, source, req.Plan.Options.SourceDatabase, snap,
+                state.Reports.Skip(reportCountBefore).Any(r => r.Error is not null));
+        }
+    }
+
+    /// <summary>表级失败后重建快照会话：原会话事务一旦被服务端 abort（25P02）即不可复用；重建丢失跨表一致性但避免整批连锁失败。</summary>
+    private async Task RecoverSnapshotIfFailedAsync(
+        SyncTaskState state, IDbProvider source, string sourceDatabase, SnapshotRef snap, bool failed)
+    {
+        if (!failed || snap.Session is null) return;
+        await snap.Session.DisposeAsync();
+        snap.Session = null;
+        try
+        {
+            snap.Session = await source.BeginSnapshotAsync(sourceDatabase, CancellationToken.None);
+            AddLog(state, "快照会话因表级失败已重建，后续表使用新快照");
+        }
+        catch (Exception ex)
+        {
+            AddLog(state, $"快照会话重建失败（{ex.Message}），后续表按普通读继续");
         }
     }
 
@@ -519,11 +551,13 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
 
     private async Task ExecuteTableAsync(
         SyncTaskState state, SyncExecuteRequest req, TableExecution te,
-        IDbProvider source, IDbProvider target, DataTransferEngine engine, ISnapshotSession? snapshot,
-        SemaphoreSlim? snapshotGate,
+        IDbProvider source, IDbProvider target, DataTransferEngine engine, SnapshotRef snap,
         string? resumeKey, IReadOnlyList<string> completedActionIds, bool truncateAlreadyDone,
         CancellationToken ct)
     {
+        // 进入本表时取一次快照引用：表内保持一致；层边界失败后由调用方重建
+        var snapshot = snap.Session;
+        var snapshotGate = snap.Gate;
         var table = te.Target.Table;
         state.CurrentTable = table;
         state.Message = $"处理 {table}";
@@ -678,7 +712,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
 
     private async Task RunCompareCoreAsync(
         SyncTaskState state, CompareRequest req,
-        IDbProvider source, IDbProvider target, ISnapshotSession? snapshot, SemaphoreSlim? snapshotGate,
+        IDbProvider source, IDbProvider target, SnapshotRef snap,
         Stopwatch sw, CancellationToken ct)
     {
         var engine = new DataTransferEngine();
@@ -765,7 +799,7 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                     var stats = await engine.DiffTableAsync(
                         source, target, srcRef, srcMeta, tgtRef, converted,
                         sel, options,
-                        snapshot,
+                        snap.Session,
                         (_, _, _, _) => MarkDirty(state),
                         apply: false,
                         maxDiffKeys: req.MaxDiffKeys,
@@ -806,6 +840,8 @@ public sealed class SyncTaskManager(ISyncTaskStore store, int maxConcurrent = 2)
                 0, [], result.Error));
             state.Percent = Math.Round(results.Count * 100.0 / total, 1);
             await PersistNowAsync(state, ct);
+            // 表级失败可能毒化快照事务（25P02），失败后重建，避免后续表连锁报错
+            await RecoverSnapshotIfFailedAsync(state, source, req.SourceDatabase, snap, result.Error is not null);
         }
 
         state.Compare = new CompareResult

@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query"
 import { ArrowLeft, CircleAlert, Table2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -177,7 +176,7 @@ export function DiffViewer({
           ) : !data || data.rows.length === 0 ? (
             <div className="rounded border p-6 text-center text-xs text-muted-foreground">无差异</div>
           ) : (
-            <ScrollArea className="max-h-[420px] rounded-md border">
+            <div className="max-h-[420px] overflow-y-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -214,7 +213,7 @@ export function DiffViewer({
                   ))}
                 </TableBody>
               </Table>
-            </ScrollArea>
+            </div>
           )}
           {data && data.rows.length > 0 && data.cursor < data.total && (
             <div className="mt-2 text-center">

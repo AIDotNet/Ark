@@ -246,6 +246,7 @@ public sealed class DataTransferEngine
         foreach (var s in stmts)
         {
             await using var cmd = conn.CreateCommand();
+            cmd.CommandTimeout = 0;
             cmd.CommandText = s;
             try { await cmd.ExecuteNonQueryAsync(); }
             catch { /* 调优语句失败不阻塞同步 */ }
@@ -255,6 +256,7 @@ public sealed class DataTransferEngine
     private static async Task<long?> ScalarMax(DbConnection conn, IDbProvider target, TableRef t, string pkCol, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 0;
         cmd.CommandText = $"SELECT MAX({target.Ddl.Quote(pkCol)}) FROM {target.Ddl.TableName(t)}";
         var v = await cmd.ExecuteScalarAsync(ct);
         return v is null or DBNull ? null : Convert.ToInt64(v);

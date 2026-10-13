@@ -21,7 +21,6 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
@@ -401,7 +400,8 @@ export function NewSyncFlow({
             ))}
           </div>
 
-          <ScrollArea className="min-h-0 flex-1 pr-2">
+          {/* 原生滚动：Radix ScrollArea 的 height:100% 在仅有 max-height 的 flex 容器内无法解析，多表长内容会溢出 */}
+          <div className="min-h-0 flex-1 overflow-y-auto pr-2">
             {/* 步骤切换只做进场动画：AnimatePresence mode="wait" 依赖退场动画完成才挂载新步骤，
                 在复杂步骤子树（Collapse/Select/长列表）上退场有概率永不完成，整个向导冻死在旧步骤
                 （实测：点「生成同步计划」后底部按钮全部失效）。改为 key 换载 + 进场滑动，旧步骤立即卸载。 */}
@@ -463,13 +463,14 @@ export function NewSyncFlow({
                     <RadioGroup
                       value={d.mode}
                       onValueChange={(v) => patch({ mode: v as SyncMode })}
-                      className="grid grid-cols-2 gap-2"
+                      className="grid grid-cols-3 gap-2"
                     >
                       <ModeOption value="StructureOnly" checked={d.mode === "StructureOnly"} title="仅结构" desc="类型映射 + 函数翻译" />
                       <ModeOption value="StructureAndData" checked={d.mode === "StructureAndData"} title="结构 + 数据" desc="同步结构并复制数据" />
+                      <ModeOption value="DataOnly" checked={d.mode === "DataOnly"} title="仅数据" desc="不动已有表结构，只复制数据" />
                     </RadioGroup>
 
-                    {d.mode === "StructureAndData" && (
+                    {d.mode !== "StructureOnly" && (
                       <div className="mt-3 flex animate-in flex-wrap items-center gap-3 fade-in slide-in-from-top-1 duration-200">
                         <Label className="text-xs">数据方式</Label>
                         <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
@@ -590,7 +591,7 @@ export function NewSyncFlow({
                           )}
                         </div>
                         <div className="mt-1 text-[11px] text-muted-foreground">
-                          快照 {plan.id.slice(0, 8)} · 执行时使用此快照，不重新规划 · {plan.options.mode === "StructureOnly" ? "仅结构" : "结构 + 数据"}
+                          快照 {plan.id.slice(0, 8)} · 执行时使用此快照，不重新规划 · {plan.options.mode === "StructureOnly" ? "仅结构" : plan.options.mode === "DataOnly" ? "仅数据" : "结构 + 数据"}
                         </div>
                       </div>
 
@@ -643,7 +644,7 @@ export function NewSyncFlow({
               {/* Step 3：执行 */}
               {step === 3 && taskId && <TaskRunView taskId={taskId} onRunningChange={setTaskRunning} />}
             </motion.div>
-          </ScrollArea>
+          </div>
 
           {/* 固定底部操作栏：始终可见，不随内容滚动 */}
           <div className="flex shrink-0 items-center gap-3 border-t pt-3">

@@ -150,7 +150,7 @@ export function TaskRunView({ taskId, onRunningChange }: { taskId: string; onRun
   )
 }
 
-/** 报告表：DDL / 数据统计 + 校验列。 */
+/** 报告表：紧凑 6 列（弹窗宽度内完整可见），字段兜底兼容旧后端 DTO 缺列（防 NaN/空白行）。 */
 export function ReportView({ reports }: { reports: TableSyncReport[] }) {
   return (
     <div className="rounded-lg border p-3">
@@ -159,60 +159,70 @@ export function ReportView({ reports }: { reports: TableSyncReport[] }) {
         <TableHeader>
           <TableRow>
             <TableHead>表</TableHead>
-            <TableHead>DDL 成功/失败</TableHead>
-            <TableHead>插入</TableHead>
-            <TableHead>更新</TableHead>
-            <TableHead>删除</TableHead>
+            <TableHead className="text-right">DDL</TableHead>
+            <TableHead className="text-right">行变更</TableHead>
             <TableHead>校验</TableHead>
-            <TableHead>耗时</TableHead>
+            <TableHead className="text-right">耗时</TableHead>
             <TableHead>状态</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {reports.map((r) => (
-            <TableRow key={r.table}>
-              <TableCell className="text-xs">{r.table}</TableCell>
-              <TableCell className="text-xs">{r.ddlExecuted}/{r.ddlFailed}</TableCell>
-              <TableCell className="text-xs">{r.rowsInserted}</TableCell>
-              <TableCell className="text-xs">{r.rowsUpdated}</TableCell>
-              <TableCell className="text-xs">{r.rowsDeleted}</TableCell>
-              <TableCell className="text-xs">
-                {r.verification ? (
-                  r.verification.match ? (
+          {reports.map((r, i) => {
+            const ins = r.rowsInserted ?? 0;
+            const upd = r.rowsUpdated ?? 0;
+            const del = r.rowsDeleted ?? 0;
+            const changed = ins + upd + del;
+            const ddlTotal = (r.ddlExecuted ?? 0) + (r.ddlFailed ?? 0);
+            const v = r.verification;
+            return (
+              <TableRow key={`${i}-${r.table ?? ""}`}>
+                <TableCell className="max-w-40 truncate text-xs" title={r.table}>
+                  {r.table || "—"}
+                </TableCell>
+                <TableCell className="text-right text-xs tabular-nums">
+                  {ddlTotal === 0 ? "—" : `✓${r.ddlExecuted ?? 0}${r.ddlFailed ? ` ✗${r.ddlFailed}` : ""}`}
+                </TableCell>
+                <TableCell className="text-right text-xs tabular-nums">
+                  {changed === 0 ? "—" : `+${ins.toLocaleString()}${upd > 0 ? ` ~${upd.toLocaleString()}` : ""}${del > 0 ? ` -${del.toLocaleString()}` : ""}`}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {!v ? (
+                    "—"
+                  ) : v.match ? (
                     <span className="text-emerald-600 dark:text-emerald-400">
-                      ✓ {r.verification.sourceRows}
-                      {r.verification.sampleMatch === false && " (抽样不一致)"}
+                      ✓ {v.sourceRows.toLocaleString()}
+                      {v.sampleMatch === false && " (抽样不一致)"}
                     </span>
                   ) : (
                     <span className="text-destructive">
-                      ✗ {r.verification.sourceRows}≠{r.verification.targetRows}
+                      ✗ {v.sourceRows.toLocaleString()}≠{v.targetRows.toLocaleString()}
                     </span>
-                  )
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell className="text-xs">{(r.elapsedMs / 1000).toFixed(2)}s</TableCell>
-              <TableCell className="text-xs">
-                {r.error ? <Badge variant="destructive">失败</Badge> : <Badge>成功</Badge>}
-              </TableCell>
-            </TableRow>
-          ))}
+                  )}
+                </TableCell>
+                <TableCell className="text-right text-xs tabular-nums">
+                  {typeof r.elapsedMs === "number" ? `${(r.elapsedMs / 1000).toFixed(2)}s` : "—"}
+                </TableCell>
+                <TableCell className="text-xs">
+                  {r.error ? <Badge variant="destructive">失败</Badge> : <Badge>成功</Badge>}
+                </TableCell>
+              </TableRow>
+            );
+          })}
         </TableBody>
       </Table>
       {reports.some((r) => r.error) && (
         <div className="mt-2 space-y-1">
           {reports
             .filter((r) => r.error)
-            .map((r) => (
-              <div key={r.table} className="text-xs text-destructive">
-                {r.table}: {r.error}
+            .map((r, i) => (
+              <div key={`${i}-${r.table ?? ""}`} className="text-xs text-destructive">
+                {r.table || "未知表"}: {r.error}
               </div>
             ))}
         </div>
       )}
     </div>
-  )
+  );
 }
 
 /** 任务历史列表。 */

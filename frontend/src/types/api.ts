@@ -172,7 +172,7 @@ export interface DdlExecuteResponse { statements: string[]; executed: number; er
 
 // ---------- 同步（v2：快照计划 / 对比 / Profile / 调度） ----------
 
-export type SyncMode = "StructureOnly" | "StructureAndData";
+export type SyncMode = "StructureOnly" | "StructureAndData" | "DataOnly";
 export type DataSyncMethod = "FullCopy" | "RowDiff";
 export type ConflictMode = "Error" | "Truncate" | "SkipExisting";
 export type VerifyMode = "Off" | "Sample" | "Full";

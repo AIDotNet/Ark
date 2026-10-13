@@ -41,7 +41,7 @@ public sealed class MySqlProvider : ProviderBase
             AllowPublicKeyRetrieval = true,
             AllowLoadLocalInfile = true, // MySqlBulkCopy 走 LOAD DATA LOCAL 协议；服务端未放行时自动降级
             SslMode = MySqlSslMode.Preferred,
-            DefaultCommandTimeout = 60,
+            DefaultCommandTimeout = 0, // 同步不设命令超时
         };
         return new MySqlConnection(b.ConnectionString);
     }

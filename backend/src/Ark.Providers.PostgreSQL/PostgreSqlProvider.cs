@@ -36,6 +36,9 @@ public sealed class PostgreSqlProvider : ProviderBase
             Username = Spec.Username ?? "postgres",
             Password = Spec.Password ?? "",
             Database = string.IsNullOrEmpty(database) ? (Spec.Database ?? "postgres") : database,
+            // 同步路径不设超时：0 = 连接/池等待与未显式设置超时的命令均不限时（SQL 控制台按请求显式覆盖）
+            Timeout = 0,
+            CommandTimeout = 0,
         };
         return new NpgsqlConnection(b.ConnectionString);
     }
@@ -531,11 +534,12 @@ public sealed class PostgreSqlProvider : ProviderBase
         var conn = (NpgsqlConnection)await OpenConnectionAsync(table.Database, ct);
         var colSql = string.Join(", ", columns.Select(Ddl.Quote));
         var writer = await conn.BeginTextImportAsync($"COPY {Ddl.TableName(table)} ({colSql}) FROM STDIN", ct);
-        return new PgCopyWriter(writer, columns.Count);
+        // 连接随 writer 一并释放：否则每表泄漏一条池连接，多表任务会打满 Max Pool Size
+        return new PgCopyWriter(conn, writer, columns.Count);
     }
 
     /// <summary>COPY text 格式写入器：TSV 转义；null=\N；bytea=\x hex；bool=t/f。Dispose 即完成 COPY。</summary>
-    private sealed class PgCopyWriter(TextWriter inner, int colCount) : IBulkWriter
+    private sealed class PgCopyWriter(NpgsqlConnection conn, TextWriter inner, int colCount) : IBulkWriter
     {
         public long RowsWritten { get; private set; }
 
@@ -554,7 +558,17 @@ public sealed class PostgreSqlProvider : ProviderBase
 
         public async Task CompleteAsync(CancellationToken ct = default) => await inner.FlushAsync(ct);
 
-        public async ValueTask DisposeAsync() => await inner.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await inner.DisposeAsync();
+            }
+            finally
+            {
+                await conn.DisposeAsync();
+            }
+        }
     }
 
     internal static string Escape(object? v) => v switch

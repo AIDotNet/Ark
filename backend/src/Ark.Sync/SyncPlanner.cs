@@ -87,7 +87,11 @@ public sealed class SyncPlanner
 
             if (srcMeta.IsView)
             {
-                if (source.Dialect == target.Dialect)
+                if (req.Mode == SyncMode.DataOnly)
+                {
+                    issueList.Add(new ConversionIssue("hint", "仅数据模式：跳过视图定义同步（视图无行数据）"));
+                }
+                else if (source.Dialect == target.Dialect)
                 {
                     await AppendViewActions(source, target, req, sel, tgtSchema, existing, actions, issueList, ct);
                 }
@@ -123,7 +127,7 @@ public sealed class SyncPlanner
                         Sql = sql,
                         Warnings = warnings.Distinct().ToList(),
                     });
-                var defer = req.DeferIndexes && req.Mode == SyncMode.StructureAndData;
+                var defer = req.DeferIndexes && req.Mode != SyncMode.StructureOnly;
                 foreach (var idx in converted.Indexes)
                 {
                     var idxStmts = target.Ddl.CreateIndex(idx, tgtRef, converted);
@@ -155,6 +159,11 @@ public sealed class SyncPlanner
                         });
                 }
             }
+            else if (req.Mode == SyncMode.DataOnly)
+            {
+                // 仅数据模式：目标表已存在则完全不动结构，只复制数据
+                issueList.Add(new ConversionIssue("hint", "仅数据模式：目标表已存在，跳过结构对比与变更，仅同步数据"));
+            }
             else
             {
                 var detail = StructureDiffer.DiffDetailed(existing, converted, tgtRef);
@@ -172,7 +181,7 @@ public sealed class SyncPlanner
 
             // 数据计划
             DataPlan? data = null;
-            if (req.Mode == SyncMode.StructureAndData && !srcMeta.IsView)
+            if (req.Mode != SyncMode.StructureOnly && !srcMeta.IsView)
             {
                 var est = await source.EstimateRowsAsync(srcRef, ct);
                 var warns = new List<string>();
@@ -423,7 +432,7 @@ public sealed class SyncPlanner
         {
             await using var conn = await source.OpenConnectionAsync(srcRef.Database, ct);
             await using var cmd = conn.CreateCommand();
-            cmd.CommandTimeout = 15;
+            cmd.CommandTimeout = 0; // 同步路径不设超时：大表试编译也可能超 15s
             cmd.CommandText = $"SELECT 1 FROM {source.Ddl.TableName(srcRef)} WHERE ({where}) LIMIT 1";
             await cmd.ExecuteScalarAsync(ct);
         }

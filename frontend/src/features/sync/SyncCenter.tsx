@@ -229,7 +229,7 @@ function ProfileCard({
           {nameOf(cfg.sourceConnectionId, cfg.sourceDatabase)} → {nameOf(cfg.targetConnectionId, cfg.targetDatabase)}
         </span>
         <Badge variant="secondary" className="text-[10px]">
-          {cfg.mode === "StructureOnly" ? "仅结构" : cfg.dataMethod === "RowDiff" ? "结构+Diff" : "结构+全量"}
+          {cfg.mode === "StructureOnly" ? "仅结构" : cfg.mode === "DataOnly" ? "仅数据" : cfg.dataMethod === "RowDiff" ? "结构+Diff" : "结构+全量"}
         </Badge>
         <Badge variant="outline" className="text-[10px]">{tables} 张表</Badge>
         {cfg.conflictMode === "Truncate" && <Badge variant="outline" className="text-[10px]">先清空</Badge>}

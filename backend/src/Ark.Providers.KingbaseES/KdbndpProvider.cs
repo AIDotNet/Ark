@@ -41,6 +41,9 @@ public sealed class KdbndpProvider : ProviderBase
             Username = Spec.Username ?? "postgres",
             Password = Spec.Password ?? "",
             Database = string.IsNullOrEmpty(database) ? (Spec.Database ?? "postgres") : database,
+            // 同步路径不设超时（Kdbndp 与 Npgsql 参数兼容）
+            Timeout = 0,
+            CommandTimeout = 0,
         };
         return new KdbndpConnection(b.ConnectionString);
     }
@@ -557,11 +560,12 @@ public sealed class KdbndpProvider : ProviderBase
         var colSql = string.Join(", ", columns.Select(Ddl.Quote));
         var writer = await conn.BeginBinaryImportAsync(
             $"COPY {Ddl.TableName(table)} ({colSql}) FROM STDIN (FORMAT BINARY)", ct);
-        return new KesBinaryWriter(writer, columns.Count);
+        // 连接随 writer 一并释放：否则每表泄漏一条池连接，多表任务会打满连接池上限
+        return new KesBinaryWriter(conn, writer, columns.Count);
     }
 
     /// <summary>COPY BINARY 写入器：行值按目标列类型由驱动绑定；null/DBNull 写 NULL。Dispose 即完成 COPY。</summary>
-    private sealed class KesBinaryWriter(KdbndpBinaryImporter inner, int colCount) : IBulkWriter
+    private sealed class KesBinaryWriter(KdbndpConnection conn, KdbndpBinaryImporter inner, int colCount) : IBulkWriter
     {
         public long RowsWritten { get; private set; }
 
@@ -577,7 +581,17 @@ public sealed class KdbndpProvider : ProviderBase
 
         public async Task CompleteAsync(CancellationToken ct = default) => await inner.CompleteAsync(ct);
 
-        public async ValueTask DisposeAsync() => await inner.DisposeAsync();
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                await inner.DisposeAsync();
+            }
+            finally
+            {
+                await conn.DisposeAsync();
+            }
+        }
     }
 
     public override async Task<IReadOnlyList<ExtensionDependency>> CheckFunctionsAsync(
