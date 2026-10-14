@@ -269,8 +269,11 @@ public sealed class KdbndpProvider : ProviderBase
                 var comment = r.IsDBNull(4) ? null : r.GetString(4);
                 var generated = r.GetString(5);
                 var identity = r.IsDBNull(6) ? "" : r.GetString(6);
+                // 生成列的表达式也存在 pg_attrdef（pg_get_expr 可取），但它不是默认值：
+                // 必须填 GeneratedExpression 供 DDL 原样发射 GENERATED ALWAYS AS，且不能进 DefaultValueSql（会被当默认值翻译而报错）
+                var isGenerated = generated.Length > 0;
                 // IDENTITY 列无 nextval 默认值，需读 attidentity；serial 系列才有 nextval
-                var isAuto = identity.Length > 0 || (dflt is not null && dflt.Contains("nextval(", StringComparison.OrdinalIgnoreCase));
+                var isAuto = identity.Length > 0 || (!isGenerated && dflt is not null && dflt.Contains("nextval(", StringComparison.OrdinalIgnoreCase));
                 var dfltExpr = isAuto ? null : StripPgCasts(dflt);
                 columns.Add(new CanonicalColumn
                 {
@@ -278,13 +281,14 @@ public sealed class KdbndpProvider : ProviderBase
                     Type = TypeMapper.ToCanonical(ArkDialect.KingbaseES, type, null, null, null),
                     NativeType = type,
                     Nullable = !notNull,
-                    DefaultValueSql = dfltExpr,
-                    DefaultKind = generated.Length > 0 || isAuto
+                    DefaultValueSql = isGenerated ? null : dfltExpr,
+                    DefaultKind = isGenerated || isAuto
                         ? ValueExprKind.None
                         : FunctionTranslator.Recognize(ArkDialect.KingbaseES, dfltExpr),
                     IsAutoIncrement = isAuto,
                     Comment = comment,
-                    IsGenerated = generated.Length > 0,
+                    IsGenerated = isGenerated,
+                    GeneratedExpression = isGenerated ? dfltExpr : null,
                 });
             }
         }

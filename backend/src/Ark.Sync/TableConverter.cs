@@ -69,7 +69,7 @@ public static class TableConverter
             {
                 if (col.GeneratedExpression is null)
                     issues.Add(new ConversionIssue("error", $"列 {col.Name}: 生成列表达式无法从源库提取，无法同步"));
-                else
+                else if (from != to) // 同方言原样复制必然兼容，无需告警
                     issues.Add(new ConversionIssue("warning",
                         $"列 {col.Name}: 生成列表达式按原文复制（{col.GeneratedExpression}），请确认目标方言兼容"));
             }
