@@ -240,9 +240,22 @@ export function ConnectionTree() {
       case "truncate":
         if (t.table) requestTruncate(t.conn, db, sc, t.table)
         break
+      case "exportScope":
+        setExportScope({
+          conn: t.conn,
+          database: db,
+          schema: action.scope === "schema" ? sc : null,
+          scope: action.scope,
+        })
+        break
       case "drop":
         if (t.table) requestDropTable(t.conn, db, sc, t.table, action.isView)
         break
+      default: {
+        // 穷尽性保护：MenuAction 新增变体而未分发时，编译期直接报错（防止静默无反应）
+        const unreachable: never = action
+        void unreachable
+      }
     }
   }
 
