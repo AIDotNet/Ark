@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { motion } from "motion/react"
 import { ArrowRight, Check, ChevronDown, CircleAlert, GitCompareArrows, Loader2, Play, Search, TriangleAlert } from "lucide-react"
@@ -35,6 +35,7 @@ import type {
   ConflictMode,
   DataSyncMethod,
   ExecutionPlan,
+  ExtensionDependency,
   SyncMode,
   SyncPlanRequest,
   TableSelection,
@@ -57,6 +58,7 @@ interface Draft {
   dropExtraTables: boolean
   alignAutoIncrement: boolean
   deferIndexes: boolean
+  syncExtensions: boolean
   verifyMode: VerifyMode
   batchSize: string
   chunkRows: string
@@ -77,6 +79,7 @@ const initialDraft: Draft = {
   dropExtraTables: false,
   alignAutoIncrement: true,
   deferIndexes: false,
+  syncExtensions: false,
   verifyMode: "Sample",
   batchSize: "1000",
   chunkRows: "2000",
@@ -99,6 +102,7 @@ function draftFromConfig(c: SyncPlanRequest): Partial<Draft> {
     dropExtraTables: c.dropExtraTables,
     alignAutoIncrement: c.alignAutoIncrement,
     deferIndexes: c.deferIndexes,
+    syncExtensions: c.syncExtensions ?? false,
     verifyMode: c.verifyMode,
     batchSize: String(c.batchSize),
     chunkRows: String(c.chunkRows),
@@ -112,7 +116,8 @@ function hasAdvanced(d: Partial<Draft>): boolean {
     d.batchSize !== initialDraft.batchSize ||
     d.chunkRows !== initialDraft.chunkRows ||
     d.maxParallelTables !== initialDraft.maxParallelTables ||
-    !!d.deferIndexes
+    !!d.deferIndexes ||
+    !!d.syncExtensions
   )
 }
 
@@ -224,6 +229,7 @@ export function NewSyncFlow({
       batchSize: Number(d.batchSize) || 1000,
       chunkRows: Number(d.chunkRows) || 2000,
       deferIndexes: d.deferIndexes,
+      syncExtensions: d.syncExtensions,
       verifyMode: d.verifyMode,
       maxParallelTables: Number(d.maxParallelTables) || 2,
       tables,
@@ -455,95 +461,9 @@ export function NewSyncFlow({
                 </>
               )}
 
-              {/* Step 1：范围与选项 */}
+              {/* Step 1：范围与选项（先选表，再定同步方式） */}
               {step === 1 && (
                 <>
-                  <div className="rounded-lg border p-3">
-                    <div className="mb-2 text-sm font-medium">同步模式</div>
-                    <RadioGroup
-                      value={d.mode}
-                      onValueChange={(v) => patch({ mode: v as SyncMode })}
-                      className="grid grid-cols-3 gap-2"
-                    >
-                      <ModeOption value="StructureOnly" checked={d.mode === "StructureOnly"} title="仅结构" desc="类型映射 + 函数翻译" />
-                      <ModeOption value="StructureAndData" checked={d.mode === "StructureAndData"} title="结构 + 数据" desc="同步结构并复制数据" />
-                      <ModeOption value="DataOnly" checked={d.mode === "DataOnly"} title="仅数据" desc="不动已有表结构，只复制数据" />
-                    </RadioGroup>
-
-                    {d.mode !== "StructureOnly" && (
-                      <div className="mt-3 flex animate-in flex-wrap items-center gap-3 fade-in slide-in-from-top-1 duration-200">
-                        <Label className="text-xs">数据方式</Label>
-                        <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
-                          <SelectTrigger className="w-44" size="sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="FullCopy">全量复制</SelectItem>
-                            <SelectItem value="RowDiff">行级 Diff（分块）</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <Select value={d.conflictMode} onValueChange={(v) => patch({ conflictMode: v as ConflictMode })}>
-                          <SelectTrigger className="w-52" size="sm"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Error">冲突时报错</SelectItem>
-                            <SelectItem value="Truncate">复制前清空目标表</SelectItem>
-                            <SelectItem value="SkipExisting">跳过已存在（需主键）</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        {d.dataMethod === "RowDiff" && (
-                          <OptSwitch label="删除目标多余行" checked={d.deleteExtraRows} onChange={(v) => patch({ deleteExtraRows: v })} />
-                        )}
-                        <OptSwitch label="对齐自增/序列" checked={d.alignAutoIncrement} onChange={(v) => patch({ alignAutoIncrement: v })} />
-                      </div>
-                    )}
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
-                      <OptSwitch label="删除目标端多余表" checked={d.dropExtraTables} onChange={(v) => patch({ dropExtraTables: v })} />
-                      <Label className="text-xs">校验</Label>
-                      <Select value={d.verifyMode} onValueChange={(v) => patch({ verifyMode: v as VerifyMode })}>
-                        <SelectTrigger className="w-36" size="sm"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Off">关闭</SelectItem>
-                          <SelectItem value="Sample">行数+抽样</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    {/* 高级参数：默认折叠，偏离默认值时自动展开 */}
-                    <div className="mt-3 border-t pt-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowAdvanced((v) => !v)}
-                        className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-                      >
-                        <ChevronDown className={`size-3.5 transition-transform duration-200 ${showAdvanced ? "" : "-rotate-90"}`} />
-                        高级选项
-                        {!showAdvanced && <span className="font-normal">（批次 / 分块 / 并行 / 索引后建）</span>}
-                      </button>
-                      <Collapse open={showAdvanced}>
-                        <div className="mt-3 flex flex-wrap items-center gap-3">
-                          <OptSwitch label="大表：索引后建" checked={d.deferIndexes} onChange={(v) => patch({ deferIndexes: v })} />
-                          <Label className="text-xs">批次</Label>
-                          <Input className="h-8 w-20" inputMode="numeric" value={d.batchSize} onChange={(e) => patch({ batchSize: e.target.value.replace(/\D/g, "") })} />
-                          <Label className="text-xs">分块</Label>
-                          <Input className="h-8 w-20" inputMode="numeric" value={d.chunkRows} onChange={(e) => patch({ chunkRows: e.target.value.replace(/\D/g, "") })} />
-                          <Label className="text-xs">并行表数</Label>
-                          <Input className="h-8 w-16" inputMode="numeric" value={d.maxParallelTables} onChange={(e) => patch({ maxParallelTables: e.target.value.replace(/\D/g, "") })} />
-                        </div>
-                      </Collapse>
-                    </div>
-                  </div>
-
-                  {step1Destructive && (
-                    <Alert variant="warning">
-                      <TriangleAlert />
-                      <AlertDescription className="text-xs">
-                        当前配置包含破坏性操作：
-                        {d.conflictMode === "Truncate" && "复制前清空目标表"}
-                        {d.conflictMode === "Truncate" && d.dropExtraTables && "、"}
-                        {d.dropExtraTables && "删除目标端多余表"}
-                        。生成计划后会在审阅步骤要求二次确认。
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
                   <TablePicker
                     tables={tablesFiltered}
                     total={(srcTables.data ?? []).length}
@@ -562,7 +482,104 @@ export function NewSyncFlow({
                     }
                     onSelectAll={() => setSelectedTables(new Set(srcTables.data?.filter((t) => t.kind === "table").map((t) => t.name) ?? []))}
                     onClear={() => setSelectedTables(new Set())}
+                    headerExtra={
+                      <OptSwitch label="删除目标端多余表" checked={d.dropExtraTables} onChange={(v) => patch({ dropExtraTables: v })} />
+                    }
                   />
+
+                  <div className="rounded-lg border p-3">
+                    <div className="mb-2 text-sm font-medium">同步内容</div>
+                    <RadioGroup
+                      value={d.mode}
+                      onValueChange={(v) => patch({ mode: v as SyncMode })}
+                      className="grid grid-cols-3 gap-2"
+                    >
+                      <ModeOption value="StructureOnly" checked={d.mode === "StructureOnly"} title="仅结构" desc="只建表/改表，不复制数据" />
+                      <ModeOption value="StructureAndData" checked={d.mode === "StructureAndData"} title="结构 + 数据" desc="同步结构并复制数据" />
+                      <ModeOption value="DataOnly" checked={d.mode === "DataOnly"} title="仅数据" desc="保持目标表结构，只复制数据" />
+                    </RadioGroup>
+                    <div className="mt-2.5 flex items-center gap-2">
+                      <OptSwitch label="先对比再同步" checked={d.compareFirst} onChange={(v) => patch({ compareFirst: v })} />
+                      <span className="text-[11px] text-muted-foreground">生成计划前先对比两端差异，审阅时先看对比结果</span>
+                    </div>
+                  </div>
+
+                  {d.mode !== "StructureOnly" && (
+                    <div className="rounded-lg border p-3">
+                      <div className="mb-2 text-sm font-medium">数据选项</div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <Label className="text-xs">数据方式</Label>
+                        <Select value={d.dataMethod} onValueChange={(v) => patch({ dataMethod: v as DataSyncMethod })}>
+                          <SelectTrigger className="w-44" size="sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="FullCopy">全量复制</SelectItem>
+                            <SelectItem value="RowDiff">行级 Diff（分块）</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Label className="text-xs">冲突处理</Label>
+                        <Select value={d.conflictMode} onValueChange={(v) => patch({ conflictMode: v as ConflictMode })}>
+                          <SelectTrigger className="w-52" size="sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Error">冲突时报错</SelectItem>
+                            <SelectItem value="Truncate">复制前清空目标表</SelectItem>
+                            <SelectItem value="SkipExisting">跳过已存在（需主键）</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        {d.dataMethod === "RowDiff" && (
+                          <OptSwitch label="删除目标多余行" checked={d.deleteExtraRows} onChange={(v) => patch({ deleteExtraRows: v })} />
+                        )}
+                        <OptSwitch label="对齐自增/序列" checked={d.alignAutoIncrement} onChange={(v) => patch({ alignAutoIncrement: v })} />
+                        <Label className="text-xs">完成后校验</Label>
+                        <Select value={d.verifyMode} onValueChange={(v) => patch({ verifyMode: v as VerifyMode })}>
+                          <SelectTrigger className="w-36" size="sm"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Off">关闭</SelectItem>
+                            <SelectItem value="Sample">行数 + 抽样比对</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 高级选项：性能参数与扩展插件（默认折叠，偏离默认值时自动展开） */}
+                  <div className="rounded-lg border p-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced((v) => !v)}
+                      className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <ChevronDown className={`size-3.5 transition-transform duration-200 ${showAdvanced ? "" : "-rotate-90"}`} />
+                      高级选项
+                      {!showAdvanced && <span className="font-normal">（批次 / 分块 / 并行 / 索引后建 / 扩展插件）</span>}
+                    </button>
+                    <Collapse open={showAdvanced}>
+                      <div className="mt-3 flex flex-wrap items-center gap-3">
+                        <OptSwitch label="大表：索引后建" checked={d.deferIndexes} onChange={(v) => patch({ deferIndexes: v })} />
+                        <OptSwitch label="同步源库扩展插件" checked={d.syncExtensions} onChange={(v) => patch({ syncExtensions: v })} />
+                        <Label className="text-xs">批次</Label>
+                        <Input className="h-8 w-20" inputMode="numeric" value={d.batchSize} onChange={(e) => patch({ batchSize: e.target.value.replace(/\D/g, "") })} />
+                        <Label className="text-xs">分块</Label>
+                        <Input className="h-8 w-20" inputMode="numeric" value={d.chunkRows} onChange={(e) => patch({ chunkRows: e.target.value.replace(/\D/g, "") })} />
+                        <Label className="text-xs">并行表数</Label>
+                        <Input className="h-8 w-16" inputMode="numeric" value={d.maxParallelTables} onChange={(e) => patch({ maxParallelTables: e.target.value.replace(/\D/g, "") })} />
+                      </div>
+                    </Collapse>
+                  </div>
+
+                  {step1Destructive && (
+                    <Alert variant="warning">
+                      <TriangleAlert />
+                      <AlertDescription className="text-xs">
+                        当前配置包含破坏性操作：
+                        {d.conflictMode === "Truncate" && "复制前清空目标表"}
+                        {d.conflictMode === "Truncate" && d.dropExtraTables && "、"}
+                        {d.dropExtraTables && "删除目标端多余表"}
+                        。生成计划后会在审阅步骤要求二次确认。
+                      </AlertDescription>
+                    </Alert>
+                  )}
                 </>
               )}
 
@@ -665,7 +682,6 @@ export function NewSyncFlow({
               {step === 1 && (
                 <>
                   <Button variant="outline" onClick={() => go(0)}>上一步</Button>
-                  <OptSwitch label="先对比再同步" checked={d.compareFirst} onChange={(v) => patch({ compareFirst: v })} />
                   {d.compareFirst ? (
                     <Button onClick={runCompare} disabled={busy || selectedTables.size === 0}>
                       {busy ? <Loader2 className="animate-spin" /> : <GitCompareArrows />} 开始对比
@@ -794,6 +810,7 @@ function TablePicker({
   onToggle,
   onSelectAll,
   onClear,
+  headerExtra,
 }: {
   /** 当前搜索过滤后的表 */
   tables: { name: string; kind: string }[]
@@ -807,6 +824,8 @@ function TablePicker({
   onToggle: (t: string) => void
   onSelectAll: () => void
   onClear: () => void
+  /** 标题行右侧扩展位（如"删除目标端多余表"这类范围级开关） */
+  headerExtra?: ReactNode
 }) {
   return (
     <div className="rounded-lg border p-3">
@@ -816,21 +835,22 @@ function TablePicker({
         {!loading && !error && (
           <span className="text-xs font-normal text-muted-foreground">共 {total} 个对象</span>
         )}
+        {headerExtra}
         <div className="relative ml-auto">
           <Search className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input className="h-8 w-44 pl-7" placeholder="搜索表…" value={search} onChange={(e) => onSearch(e.target.value)} />
         </div>
-        <Button variant="ghost" size="sm" onClick={onSelectAll}>全选</Button>
+        <Button variant="ghost" size="sm" onClick={onSelectAll}>全选表</Button>
         <Button variant="ghost" size="sm" onClick={onClear}>清空</Button>
       </div>
       {loading ? (
-        <div className="grid max-h-64 grid-cols-3 gap-1 overflow-auto rounded-md border p-2">
+        <div className="grid max-h-72 grid-cols-3 gap-1 overflow-auto rounded-md border p-2">
           {Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-6" />)}
         </div>
       ) : error ? (
         <div className="text-sm text-destructive">{error}</div>
       ) : (
-        <div className="grid max-h-64 grid-cols-2 gap-1 overflow-auto rounded-md border p-2 md:grid-cols-3">
+        <div className="grid max-h-72 grid-cols-2 gap-1 overflow-auto rounded-md border p-2 md:grid-cols-3">
           {tables.map((t) => (
             <label key={t.name} className={`flex items-center gap-2 rounded px-2 py-1 text-sm hover:bg-accent/50 ${t.kind !== "table" ? "opacity-60" : ""}`}>
               <Checkbox
@@ -848,6 +868,9 @@ function TablePicker({
           )}
         </div>
       )}
+      {!loading && !error && (
+        <div className="mt-1.5 text-[11px] text-muted-foreground">灰显为视图：默认不同步，需要时单独勾选</div>
+      )}
     </div>
   )
 }
@@ -864,6 +887,14 @@ export function PlanReview({
 }) {
   const [openTable, setOpenTable] = useState<string | null>(null)
   const [sqlOpen, setSqlOpen] = useState<string | null>(null)
+  // 缺失扩展若已在计划中生成 InstallExtension 动作（置于首个依赖它的表下，跨表去重），展示为"将自动安装"而非错误
+  const installSqls = new Set(
+    plan.tables
+      .flatMap((t) => [...t.structureActions, ...t.postCopyActions])
+      .filter((a) => a.kind === "InstallExtension")
+      .map((a) => a.sql),
+  )
+  const autoInstallable = (x: ExtensionDependency) => x.installSql !== "" && installSqls.has(x.installSql)
   return (
     <div className="overflow-hidden rounded-lg border">
       {plan.tables.map((tp, idx) => {
@@ -875,7 +906,9 @@ export function PlanReview({
         // 错误级问题不进折叠区：多表浏览时也必须一眼看到阻塞项
         const errors = [
           ...tp.conversionIssues.filter((i) => i.severity === "error").map((i) => i.message),
-          ...tp.extensions.filter((x) => !x.present).map((x) => `缺少依赖：${x.name}${x.note ? `（${x.note}）` : ""}`),
+          ...tp.extensions
+            .filter((x) => !x.present && !autoInstallable(x))
+            .map((x) => `缺少依赖：${x.name}${x.note ? `（${x.note}）` : ""}`),
         ]
         const open = openTable === tp.target.table
         return (
@@ -922,7 +955,11 @@ export function PlanReview({
                 ))}
                 {tp.extensions.filter((x) => !x.present).map((x, k) => (
                   <div key={k} className="rounded border border-dashed px-2 py-1 text-[11px]">
-                    <span className="text-destructive">缺少依赖：{x.name}{x.note ? `（${x.note}）` : ""}</span>
+                    {autoInstallable(x) ? (
+                      <span className="text-muted-foreground">将自动安装扩展：{x.name}{x.note ? `（${x.note}）` : ""}</span>
+                    ) : (
+                      <span className="text-destructive">缺少依赖：{x.name}{x.note ? `（${x.note}）` : ""}（目标端不可安装，需人工处理）</span>
+                    )}
                     {x.installSql && (
                       <pre className="mt-1 overflow-auto rounded bg-muted p-1.5 font-mono text-[10px] leading-4">{x.installSql}</pre>
                     )}

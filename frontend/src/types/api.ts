@@ -205,6 +205,7 @@ export interface SyncPlanRequest {
   batchSize: number;
   chunkRows: number;
   deferIndexes: boolean;
+  syncExtensions: boolean;
   verifyMode: VerifyMode;
   maxParallelTables: number;
   targetSchema?: string | null;
