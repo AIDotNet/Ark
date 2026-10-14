@@ -225,6 +225,30 @@ export const api = {
     a.click();
     URL.revokeObjectURL(url);
   },
+  /** 库/Schema 级批量导出：SQL 单文件 dump；CSV/JSON 为 ZIP（每表一个文件）。schema 为 null = 库内全部非系统 schema */
+  exportScope: async (connectionId: string, database: string, schema: string | null, format: string, limit?: number) => {
+    const qs = schema ? `?schema=${encodeURIComponent(schema)}` : "";
+    const res = await fetch(`/api/connections/${connectionId}/databases/${encodeURIComponent(database)}/export${qs}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ format, limit }),
+    });
+    if (!res.ok) {
+      let message = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as ApiEnvelope<unknown>;
+        if (body.message) message = body.message;
+      } catch { /* 忽略 */ }
+      throw new ArkApiError(-1, message);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${schema ? `${database}.${schema}` : database}.${format === "sql" ? "sql" : "zip"}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   importTable: async (args: TableRefArgs, file: File, format: string) => {
     const form = new FormData();
     form.append("file", file);

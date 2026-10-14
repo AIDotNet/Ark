@@ -18,6 +18,7 @@ export type MenuAction =
   | { type: "io" }
   | { type: "truncate" }
   | { type: "drop"; isView: boolean }
+  | { type: "exportScope"; scope: "database" | "schema" }
 
 export interface MenuItemSpec {
   label: string
@@ -51,6 +52,7 @@ export function databaseMenu(conn: ConnectionDto, database: string): MenuItemSpe
   return [
     { label: "新建表", action: { type: "newTable" } },
     { label: "新建查询", action: { type: "newQuery" } },
+    { label: "导出数据库…", action: { type: "exportScope", scope: "database" } },
     { label: "刷新", action: { type: "refresh", scope: "database" } },
     { label: "复制数据库名", action: { type: "copy", text: database, label: "数据库名" }, separatorBefore: true },
   ]
@@ -62,6 +64,7 @@ export function schemaMenu(conn: ConnectionDto, database: string, schema: string
   return [
     { label: "新建表", action: { type: "newTable" } },
     { label: "新建查询", action: { type: "newQuery" } },
+    { label: "导出 Schema…", action: { type: "exportScope", scope: "schema" } },
     { label: "刷新", action: { type: "refresh", scope: "schema" } },
     { label: "复制 Schema 名", action: { type: "copy", text: schema, label: "Schema 名" }, separatorBefore: true },
   ]

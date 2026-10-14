@@ -5,6 +5,7 @@ import {
   ChevronDown,
   Copy,
   Database,
+  Download,
   Eraser,
   FileText,
   FolderOpen,
@@ -49,6 +50,7 @@ import { useQuerySessions } from "@/stores/query-session"
 import type { ConnectionDto } from "@/types/api"
 import { ConnectionDialog } from "@/features/connections/ConnectionDialog"
 import { ImportExportDialog } from "@/features/io/ImportExportDialog"
+import { ExportScopeDialog } from "@/features/io/ExportScopeDialog"
 import { defaultSchema, firstDatabaseOf, hasSchemas } from "@/features/connections/dialects"
 import type { MenuAction, MenuItemSpec, MenuTarget } from "@/features/connections/tree-menus"
 import { connectionMenu, databaseMenu, relationMenu, schemaMenu, topNSelect } from "@/features/connections/tree-menus"
@@ -66,6 +68,12 @@ export function ConnectionTree() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<ConnectionDto | null>(null)
   const [ioTable, setIoTable] = useState<{ conn: string; db: string; schema: string; table: string } | null>(null)
+  const [exportScope, setExportScope] = useState<{
+    conn: ConnectionDto
+    database: string
+    schema: string | null
+    scope: "database" | "schema"
+  } | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections })
@@ -388,6 +396,16 @@ export function ConnectionTree() {
           table={ioTable.table}
         />
       )}
+      {exportScope && (
+        <ExportScopeDialog
+          open
+          onOpenChange={(o) => !o && setExportScope(null)}
+          connectionId={exportScope.conn.id}
+          database={exportScope.database}
+          schema={exportScope.schema}
+          scope={exportScope.scope}
+        />
+      )}
 
       <AlertDialog open={pendingConfirm !== null} onOpenChange={(o) => !o && setPendingConfirm(null)}>
         <AlertDialogContent>
@@ -440,6 +458,7 @@ const ACTION_ICONS: Partial<Record<MenuAction["type"], LucideIcon>> = {
   io: FolderOpen,
   truncate: Eraser,
   drop: Trash2,
+  exportScope: Download,
 }
 
 /** 统一渲染 tree-menus 构建的菜单项（分隔线/危险色/图标） */
@@ -689,3 +708,4 @@ function ConnTables({
     </div>
   )
 }
+

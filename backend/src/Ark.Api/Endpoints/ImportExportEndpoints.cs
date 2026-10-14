@@ -15,6 +15,54 @@ public static class ImportExportEndpoints
         var g = app.MapGroup("/connections/{id:guid}/databases/{db}/schemas/{schema}/tables/{table}")
             .WithTags("ImportExport");
 
+        // 库/Schema 级批量导出：schema 缺省 = 库内全部非系统 schema（SupportsSchemas 方言）或默认 schema。
+        // SQL 为单文件 dump（建表+数据，外键依赖排序）；CSV/JSON 为 ZIP（每表一个文件）。只导普通表。
+        app.MapPost("/connections/{id:guid}/databases/{db}/export", [SkipEnvelope] async (
+            HttpContext http, Guid id, string db, string? schema,
+            ExportRequest req, ArkRepository repo, CancellationToken ct) =>
+        {
+            if (req.Limit is < 0) throw ArkException.Validation($"limit 不能为负数: {req.Limit}");
+            var format = req.Format.ToLowerInvariant();
+            if (format is not ("csv" or "json" or "sql"))
+                throw ArkException.Validation($"不支持的导出格式: {req.Format}");
+            await ProviderRequest.UseAsync<object?>(id, repo, repo.Pw(), async p =>
+            {
+                var schemaNames = new List<string>();
+                if (!string.IsNullOrWhiteSpace(schema))
+                {
+                    schemaNames.Add(schema);
+                }
+                else if (p.Capabilities.SupportsSchemas)
+                {
+                    schemaNames.AddRange((await p.ListSchemasAsync(db, ct)).Select(s => s.Name));
+                }
+                else
+                {
+                    schemaNames.Add(Dialects.Get(p.Dialect).DefaultTargetSchema ?? db);
+                }
+
+                var tables = new List<(TableRef, CanonicalTable)>();
+                foreach (var s in schemaNames)
+                {
+                    foreach (var t in await p.ListTablesAsync(db, s, ct))
+                    {
+                        if (t.Kind != "table") continue;
+                        tables.Add((new TableRef(db, s, t.Name), await p.GetTableAsync(db, s, t.Name, ct)));
+                    }
+                }
+                if (tables.Count == 0) throw ArkException.Validation("该范围内没有可导出的表");
+
+                var scopeName = string.IsNullOrWhiteSpace(schema) ? db : $"{db}.{schema}";
+                var fileName = $"{scopeName}.{(format == "sql" ? "sql" : "zip")}";
+                http.Response.ContentType = format == "sql"
+                    ? "application/sql; charset=utf-8"
+                    : "application/zip";
+                http.Response.Headers.ContentDisposition = $"attachment; filename=\"{fileName}\"";
+                await Exporter.ExportManyAsync(http.Response.Body, format, p, tables, req.Limit, ct);
+                return null;
+            }, ct);
+        }).WithTags("ImportExport");
+
         // 导出：文件流下载（跳过包络包装）
         g.MapPost("/export", [SkipEnvelope] async (
             HttpContext http, Guid id, string db, string schema, string table,

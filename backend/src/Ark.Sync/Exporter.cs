@@ -31,6 +31,92 @@ public static class Exporter
         }
     }
 
+    /// <summary>
+    /// 多表批量导出（库/Schema 级）：SQL 为单文件 dump（逐表 建表 + 数据，被引用的表先建）；
+    /// CSV / JSON 打包为 ZIP（每表一个文件）。只处理调用方给定的表清单（普通表）。
+    /// </summary>
+    public static async Task ExportManyAsync(
+        Stream output, string format, IDbProvider provider,
+        IReadOnlyList<(TableRef Table, CanonicalTable Meta)> tables,
+        long? limit, CancellationToken ct = default)
+    {
+        if (tables.Count == 0) throw new ArgumentException("没有可导出的表");
+        var ordered = OrderByForeignKeys(tables);
+        switch (format.ToLowerInvariant())
+        {
+            case "sql":
+            {
+                await using var writer = new StreamWriter(output, new UTF8Encoding(false), leaveOpen: true);
+                await writer.WriteLineAsync("-- Ark 多表导出：建表语句 + 数据（按外键依赖排序，被引用的表在前）");
+                await writer.WriteLineAsync();
+                foreach (var (table, meta) in ordered)
+                {
+                    await writer.WriteLineAsync($"-- >>> {table.Schema}.{table.Table}");
+                    await ExportSqlAsync(writer.BaseStream, provider, table, meta, limit, ct);
+                    await writer.WriteLineAsync();
+                    await writer.WriteLineAsync();
+                }
+                await writer.FlushAsync(ct);
+                break;
+            }
+            case "csv":
+            case "json":
+            {
+                var ext = format.ToLowerInvariant();
+                await using var zip = new System.IO.Compression.ZipArchive(output, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true);
+                foreach (var (table, meta) in ordered)
+                {
+                    var entryName = (string.IsNullOrEmpty(table.Schema) ? table.Table : $"{table.Schema}.{table.Table}") + $".{ext}";
+                    var entry = zip.CreateEntry(entryName, System.IO.Compression.CompressionLevel.Fastest);
+                    await using var entryStream = entry.Open();
+                    if (ext == "csv") await ExportCsvAsync(entryStream, provider, table, meta, limit, ct);
+                    else await ExportJsonAsync(entryStream, provider, table, meta, limit, ct);
+                }
+                break;
+            }
+            default:
+                throw new ArgumentException($"不支持的导出格式: {format}");
+        }
+    }
+
+    /// <summary>外键依赖拓扑排序（稳定）：被导出集合内的表引用它表时先建被引用表；成环/外部引用保持原序。</summary>
+    private static List<(TableRef Table, CanonicalTable Meta)> OrderByForeignKeys(
+        IReadOnlyList<(TableRef Table, CanonicalTable Meta)> tables)
+    {
+        var names = tables.Select(t => t.Table.Table).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var deps = tables.ToDictionary(
+            t => t.Table.Table,
+            t => t.Meta.ForeignKeys
+                .Select(fk => fk.ReferencedTable)
+                .Where(r => names.Contains(r) && !string.Equals(r, t.Table.Table, StringComparison.OrdinalIgnoreCase))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase),
+            StringComparer.OrdinalIgnoreCase);
+
+        var result = new List<(TableRef, CanonicalTable)>(tables.Count);
+        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var remaining = tables.ToList();
+        while (remaining.Count > 0)
+        {
+            var progressed = false;
+            for (var i = 0; i < remaining.Count; i++)
+            {
+                var t = remaining[i];
+                if (deps.TryGetValue(t.Table.Table, out var d) && d.Any(r => !done.Contains(r))) continue;
+                result.Add(t);
+                done.Add(t.Table.Table);
+                remaining.RemoveAt(i);
+                progressed = true;
+                i--;
+            }
+            if (!progressed)
+            {
+                result.AddRange(remaining);
+                break;
+            }
+        }
+        return result;
+    }
+
     private static async IAsyncEnumerable<(object?[] Values, List<string> Names)> ReadBatches(
         IDbProvider provider, TableRef table, CanonicalTable meta, long? limit,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
