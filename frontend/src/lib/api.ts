@@ -116,8 +116,12 @@ export const api = {
     request<DdlExecuteResponse>(tablePath(args), jsonInit("PUT", { table, execute })),
   previewAlterTable: (args: TableRefArgs, table: CanonicalTable) =>
     request<DdlPreviewResponse>(tablePath(args, "/preview"), jsonInit("PUT", { table, execute: false })),
-  dropTable: (args: TableRefArgs) =>
-    request<DdlExecuteResponse>(tablePath(args), { method: "DELETE" }),
+  dropTable: (args: TableRefArgs, isView = false) =>
+    request<DdlExecuteResponse>(tablePath(args) + (isView ? "?isView=true" : ""), { method: "DELETE" }),
+  truncateTable: (args: TableRefArgs) =>
+    request<DdlExecuteResponse>(tablePath(args, "/truncate"), { method: "POST" }),
+  getViewDefinition: (args: TableRefArgs) =>
+    request<string | null>(tablePath(args, "/definition")),
 
   // ---------- 数据网格 ----------
   queryRows: (args: TableRefArgs, req: RowQueryRequest) =>

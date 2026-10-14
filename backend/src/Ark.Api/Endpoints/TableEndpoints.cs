@@ -57,14 +57,33 @@ public static class TableEndpoints
                 return new DdlExecuteResponse(statements, executed, errors, warnings.Distinct().ToList());
             }, ct));
 
-        // 删除表
-        g.MapDelete("/{table}", async (Guid id, string db, string schema, string table, ArkRepository repo, CancellationToken ct) =>
+        // 删除表/视图（isView=true 走 DROP VIEW；物化视图会被数据库拒绝并提示）
+        g.MapDelete("/{table}", async (Guid id, string db, string schema, string table, ArkRepository repo, bool? isView, CancellationToken ct) =>
             await ProviderRequest.UseAsync(id, repo, repo.Pw(), async p =>
             {
                 Identifier.EnsureValid(table, "表名");
-                var statements = p.Ddl.DropTable(new TableRef(db, schema, table));
+                var tref = new TableRef(db, schema, table);
+                var statements = isView == true ? p.Ddl.DropView(tref) : p.Ddl.DropTable(tref);
                 var (executed, errors) = await p.ExecuteDdlAsync(db, statements, ct);
                 return new DdlExecuteResponse(statements, executed, errors, []);
+            }, ct));
+
+        // 清空表：各方言 TruncateTable 生成（SQLite 无 TRUNCATE，生成器自动降级 DELETE FROM）
+        g.MapPost("/{table}/truncate", async (Guid id, string db, string schema, string table, ArkRepository repo, CancellationToken ct) =>
+            await ProviderRequest.UseAsync(id, repo, repo.Pw(), async p =>
+            {
+                Identifier.EnsureValid(table, "表名");
+                var statements = p.Ddl.TruncateTable(new TableRef(db, schema, table));
+                var (executed, errors) = await p.ExecuteDdlAsync(db, statements, ct);
+                return new DdlExecuteResponse(statements, executed, errors, []);
+            }, ct));
+
+        // 视图定义原文（pg_get_viewdef 等；方言不支持返回 null）
+        g.MapGet("/{table}/definition", (Guid id, string db, string schema, string table, ArkRepository repo, CancellationToken ct) =>
+            ProviderRequest.UseAsync(id, repo, repo.Pw(), async p =>
+            {
+                Identifier.EnsureValid(table, "表名");
+                return await p.GetViewDefinitionAsync(db, schema, table, ct);
             }, ct));
 
         return app;

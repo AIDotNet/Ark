@@ -27,6 +27,9 @@ public interface IDdlGenerator
     IReadOnlyList<string> DropIndex(string indexName, TableRef t);
     IReadOnlyList<string> DropTable(TableRef t);
 
+    /// <summary>删除视图。默认 DROP VIEW（物化视图不适用，会由数据库报错提示）。</summary>
+    IReadOnlyList<string> DropView(TableRef t) => [$"DROP VIEW {TableName(t)};"];
+
     /// <summary>对已存在的表追加外键（SQLite 不支持 → 返回空并由调用方给出警告）。</summary>
     IReadOnlyList<string> CreateForeignKey(CanonicalForeignKey fk, TableRef t);
     IReadOnlyList<string> DropForeignKey(string fkName, TableRef t);

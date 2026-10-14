@@ -1,5 +1,8 @@
 # ---- 前端构建（pnpm + lockfile 保证依赖一致）----
+# 本地构建可用 --build-arg npm_config_registry=https://registry.npmmirror.com 走国内源；CI 不传则用官方源
+ARG npm_config_registry=https://registry.npmjs.org
 FROM node:22-alpine AS web
+ARG npm_config_registry
 WORKDIR /web
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
 RUN npm i -g pnpm@9 --no-fund --no-audit \

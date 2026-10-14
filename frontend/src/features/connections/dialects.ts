@@ -24,6 +24,10 @@ export interface DialectInfo {
   databasePlaceholder: string
   /** sql-formatter 格式化语言 */
   formatterLanguage: SqlLanguage
+  /** 清空表语句形态：truncate（TRUNCATE TABLE）/ delete（SQLite 无 TRUNCATE，生成器降级 DELETE FROM） */
+  truncateKind: "truncate" | "delete"
+  /** 前 N 行查询语法：limit（绝大多数）/ top（SQL Server） */
+  topSyntax: "limit" | "top"
 }
 
 const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
@@ -36,6 +40,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "public",
     databasePlaceholder: "postgres",
     formatterLanguage: "postgresql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "MySQL",
@@ -46,6 +52,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "",
     databasePlaceholder: "可选（连接后再选库）",
     formatterLanguage: "mysql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "SQLite",
@@ -55,6 +63,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "main",
     databasePlaceholder: "",
     formatterLanguage: "sqlite",
+    truncateKind: "delete",
+    topSyntax: "limit",
   },
   {
     id: "MariaDB",
@@ -65,6 +75,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "",
     databasePlaceholder: "可选（连接后再选库）",
     formatterLanguage: "mariadb",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "SqlServer",
@@ -75,6 +87,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "dbo",
     databasePlaceholder: "master",
     formatterLanguage: "transactsql",
+    truncateKind: "truncate",
+    topSyntax: "top",
   },
   {
     id: "ClickHouse",
@@ -85,6 +99,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "",
     databasePlaceholder: "default",
     formatterLanguage: "sql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "DuckDB",
@@ -94,6 +110,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "main",
     databasePlaceholder: "",
     formatterLanguage: "postgresql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "DM8",
@@ -104,6 +122,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "",
     databasePlaceholder: "默认（单库多模式）",
     formatterLanguage: "plsql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "KingbaseES",
@@ -114,6 +134,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "public",
     databasePlaceholder: "test（PG 兼容模式）",
     formatterLanguage: "postgresql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
   {
     id: "OpenGauss",
@@ -124,6 +146,8 @@ const DIALECT_LIST_INFO: readonly (DialectInfo & { id: Dialect })[] = [
     defaultSchema: "public",
     databasePlaceholder: "postgres",
     formatterLanguage: "postgresql",
+    truncateKind: "truncate",
+    topSyntax: "limit",
   },
 ]
 

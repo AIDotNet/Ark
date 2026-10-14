@@ -1,11 +1,16 @@
-import { useState } from "react"
+import { Fragment, useState } from "react"
+import type { LucideIcon } from "lucide-react"
 import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   ChevronDown,
+  Copy,
   Database,
+  Eraser,
+  FileText,
   FolderOpen,
   Layers,
   Pencil,
+  Play,
   PlugZap,
   Plus,
   RefreshCw,
@@ -40,14 +45,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Collapse, Stagger, StaggerItem } from "@/components/ui/motion"
 import { api } from "@/lib/api"
 import { useWorkspace } from "@/stores/workspace"
+import { useQuerySessions } from "@/stores/query-session"
 import type { ConnectionDto } from "@/types/api"
 import { ConnectionDialog } from "@/features/connections/ConnectionDialog"
 import { ImportExportDialog } from "@/features/io/ImportExportDialog"
 import { defaultSchema, firstDatabaseOf, hasSchemas } from "@/features/connections/dialects"
+import type { MenuAction, MenuItemSpec, MenuTarget } from "@/features/connections/tree-menus"
+import { connectionMenu, databaseMenu, relationMenu, schemaMenu, topNSelect } from "@/features/connections/tree-menus"
 
 type PendingConfirm =
   | { type: "connection"; conn: ConnectionDto }
-  | { type: "table"; conn: ConnectionDto; database: string; schema: string; table: string }
+  | { type: "table"; conn: ConnectionDto; database: string; schema: string; table: string; isView: boolean }
+  | { type: "truncate"; conn: ConnectionDto; database: string; schema: string; table: string }
 
 export function ConnectionTree() {
   const queryClient = useQueryClient()
@@ -113,9 +122,121 @@ export function ConnectionTree() {
   const requestDeleteConnection = (conn: ConnectionDto) =>
     setPendingConfirm({ type: "connection", conn })
 
-  /** 删除表：弹 AlertDialog 确认 */
-  const requestDropTable = (conn: ConnectionDto, db: string, schema: string, table: string) =>
-    setPendingConfirm({ type: "table", conn, database: db, schema, table })
+  /** 删除表/视图：弹 AlertDialog 确认 */
+  const requestDropTable = (conn: ConnectionDto, db: string, schema: string, table: string, isView = false) =>
+    setPendingConfirm({ type: "table", conn, database: db, schema, table, isView })
+
+  /** 清空表：弹 AlertDialog 确认 */
+  const requestTruncate = (conn: ConnectionDto, db: string, schema: string, table: string) =>
+    setPendingConfirm({ type: "truncate", conn, database: db, schema, table })
+
+  /** 打开预填 SQL 的新查询标签：先写入会话（QueryConsole 挂载时以 session.sql 初始化编辑器）再开标签 */
+  const openQueryWithSql = (conn: ConnectionDto, db: string, schema: string, sql: string, title: string) => {
+    const nums = useWorkspace
+      .getState()
+      .tabs.filter((t) => t.kind === "query" && t.connectionId === conn.id)
+      .map((t) => t.queryNo ?? 0)
+    const queryNo = Math.max(0, ...nums) + 1
+    const key = `query:${conn.id}:${queryNo}`
+    useQuerySessions.getState().save(key, { sql, database: db, schema })
+    openTab({
+      kind: "query",
+      key,
+      queryNo,
+      title,
+      connectionId: conn.id,
+      connectionName: conn.name,
+      database: db,
+      schema,
+    })
+  }
+
+  /** 查看表/视图定义：视图走视图定义原文，表走元数据的建表语句 */
+  async function showRelationDdl(conn: ConnectionDto, db: string, schema: string, table: string, kind: "table" | "view") {
+    try {
+      let sql: string | null
+      if (kind === "view") {
+        sql = await api.getViewDefinition({ connectionId: conn.id, database: db, schema, table })
+        if (!sql) return toast.error("当前方言不支持读取视图定义")
+      } else {
+        sql = (await api.getTableDetail({ connectionId: conn.id, database: db, schema, table })).createSql
+        if (!sql) return toast.error("未能获取建表语句")
+      }
+      openQueryWithSql(conn, db, schema, sql.endsWith(";") ? sql : `${sql};`, `${table} DDL`)
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text)
+      toast.success(`已复制${label}`)
+    } catch {
+      toast.error("复制失败，请手动复制")
+    }
+  }
+
+  /** 按范围失效资源树缓存（react-query 前缀匹配：tables/连接 → 该库 → 该 schema） */
+  function refreshScope(t: MenuTarget, scope: "connection" | "database" | "schema") {
+    if (scope === "connection") {
+      queryClient.invalidateQueries({ queryKey: ["databases", t.conn.id] })
+      queryClient.invalidateQueries({ queryKey: ["tables", t.conn.id] })
+    } else if (scope === "database" && t.database) {
+      queryClient.invalidateQueries({ queryKey: ["schemas", t.conn.id, t.database] })
+      queryClient.invalidateQueries({ queryKey: ["tables", t.conn.id, t.database] })
+    } else if (t.database && t.schema) {
+      queryClient.invalidateQueries({ queryKey: ["tables", t.conn.id, t.database, t.schema] })
+    }
+  }
+
+  /** 菜单动作统一分发：目标上下文缺省时回落到连接的默认库/Schema */
+  function dispatch(action: MenuAction, t: MenuTarget) {
+    const db = t.database ?? firstDbOf(t.conn)
+    const sc = t.schema ?? defaultSchema(t.conn.dialect, db)
+    switch (action.type) {
+      case "editConnection":
+        setEditing(t.conn)
+        setDialogOpen(true)
+        break
+      case "deleteConnection":
+        requestDeleteConnection(t.conn)
+        break
+      case "newTable":
+        openDesigner(t.conn, db, sc)
+        break
+      case "newQuery":
+        openQuery(t.conn, db, sc)
+        break
+      case "refresh":
+        refreshScope(t, action.scope)
+        break
+      case "copy":
+        void copyText(action.text, action.label)
+        break
+      case "openTable":
+        if (t.table) openTable(t.conn, db, sc, t.table)
+        break
+      case "designTable":
+        if (t.table) openDesigner(t.conn, db, sc, t.table)
+        break
+      case "showDdl":
+        if (t.table) void showRelationDdl(t.conn, db, sc, t.table, action.kind)
+        break
+      case "quickSelect":
+        if (t.table) openQueryWithSql(t.conn, db, sc, topNSelect(t.conn, sc, t.table), `${t.table} · 前 100 行`)
+        break
+      case "io":
+        if (t.table) setIoTable({ conn: t.conn.id, db, schema: sc, table: t.table })
+        break
+      case "truncate":
+        if (t.table) requestTruncate(t.conn, db, sc, t.table)
+        break
+      case "drop":
+        if (t.table) requestDropTable(t.conn, db, sc, t.table, action.isView)
+        break
+    }
+  }
 
   async function runConfirm() {
     if (!pendingConfirm) return
@@ -125,10 +246,17 @@ export function ConnectionTree() {
         await api.deleteConnection(c.conn.id)
         toast.success("连接已删除")
         await queryClient.invalidateQueries({ queryKey: ["connections"] })
-      } else {
-        const res = await api.dropTable({ connectionId: c.conn.id, database: c.database, schema: c.schema, table: c.table })
+      } else if (c.type === "truncate") {
+        const res = await api.truncateTable({ connectionId: c.conn.id, database: c.database, schema: c.schema, table: c.table })
         if (res.errors.length > 0) toast.error(res.errors[0])
-        else toast.success(`表 ${c.table} 已删除`)
+        else toast.success(`表 ${c.table} 已清空`)
+      } else {
+        const res = await api.dropTable(
+          { connectionId: c.conn.id, database: c.database, schema: c.schema, table: c.table },
+          c.isView,
+        )
+        if (res.errors.length > 0) toast.error(res.errors[0])
+        else toast.success(`${c.isView ? "视图" : "表"} ${c.table} 已删除`)
         // 表已不存在：同步关闭指向它的数据网格/设计器标签，避免后续保存操作失效表
         useWorkspace.getState().closeTableTabs(c.conn.id, c.database, c.schema, c.table)
         await queryClient.invalidateQueries({ queryKey: ["tables", c.conn.id, c.database, c.schema] })
@@ -215,26 +343,7 @@ export function ConnectionTree() {
                       </button>
                     </ContextMenuTrigger>
                     <ContextMenuContent>
-                      <ContextMenuItem
-                        onClick={() => {
-                          setEditing(conn)
-                          setDialogOpen(true)
-                        }}
-                      >
-                        <Pencil /> 编辑连接
-                      </ContextMenuItem>
-                      <ContextMenuItem onClick={() => openDesigner(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}>
-                        <Plus /> 新建表
-                      </ContextMenuItem>
-                      <ContextMenuItem
-                        onClick={() => openQuery(conn, firstDbOf(conn), defaultSchema(conn.dialect, firstDbOf(conn)))}
-                      >
-                        <TerminalSquare /> 新建查询
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem className="text-destructive" onClick={() => requestDeleteConnection(conn)}>
-                        <Trash2 /> 删除连接
-                      </ContextMenuItem>
+                      <TreeMenuContent items={connectionMenu(conn)} onRun={(a) => dispatch(a, { conn })} />
                     </ContextMenuContent>
                   </ContextMenu>
 
@@ -243,11 +352,7 @@ export function ConnectionTree() {
                       conn={conn}
                       openDbs={openDbs}
                       toggleDb={toggleDb}
-                      openTable={openTable}
-                      openDesigner={openDesigner}
-                      openQuery={openQuery}
-                      setIoTable={setIoTable}
-                      dropTable={requestDropTable}
+                      dispatch={dispatch}
                     />
                   </Collapse>
                 </StaggerItem>
@@ -290,20 +395,24 @@ export function ConnectionTree() {
             <AlertDialogTitle>
               {pendingConfirm?.type === "connection"
                 ? `删除连接「${pendingConfirm.conn.name}」？`
-                : pendingConfirm
-                  ? `删除表「${pendingConfirm.table}」？`
-                  : ""}
+                : pendingConfirm?.type === "truncate"
+                  ? `清空表「${pendingConfirm.table}」？`
+                  : pendingConfirm
+                    ? `删除${pendingConfirm.isView ? "视图" : "表"}「${pendingConfirm.table}」？`
+                    : ""}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {pendingConfirm?.type === "connection"
                 ? "仅删除 Ark 中保存的连接配置，不影响数据库本身。"
-                : "该操作不可恢复，表结构及其数据将一并删除。"}
+                : pendingConfirm?.type === "truncate"
+                  ? "删除该表全部数据行，表结构保留，操作不可恢复。"
+                  : "该操作不可恢复，表结构及其数据将一并删除。"}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={runConfirm}>
-              删除
+              {pendingConfirm?.type === "truncate" ? "清空" : "删除"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -316,24 +425,56 @@ function firstDbOf(conn: ConnectionDto): string {
   return firstDatabaseOf(conn)
 }
 
+/** 动作 → 图标（渲染菜单项用） */
+const ACTION_ICONS: Partial<Record<MenuAction["type"], LucideIcon>> = {
+  editConnection: Pencil,
+  deleteConnection: Trash2,
+  newTable: Plus,
+  newQuery: TerminalSquare,
+  refresh: RefreshCw,
+  copy: Copy,
+  openTable: Table2,
+  designTable: Pencil,
+  showDdl: FileText,
+  quickSelect: Play,
+  io: FolderOpen,
+  truncate: Eraser,
+  drop: Trash2,
+}
+
+/** 统一渲染 tree-menus 构建的菜单项（分隔线/危险色/图标） */
+function TreeMenuContent({ items, onRun }: { items: MenuItemSpec[]; onRun: (action: MenuAction) => void }) {
+  return (
+    <ContextMenuContent className="max-h-80 overflow-y-auto">
+      {items.map((it, i) => {
+        const Icon = ACTION_ICONS[it.action.type]
+        return (
+          <Fragment key={`${it.label}-${i}`}>
+            {it.separatorBefore && <ContextMenuSeparator />}
+            <ContextMenuItem
+              className={it.danger ? "text-destructive" : undefined}
+              onClick={() => onRun(it.action)}
+            >
+              {Icon && <Icon />}
+              {it.label}
+            </ContextMenuItem>
+          </Fragment>
+        )
+      })}
+    </ContextMenuContent>
+  )
+}
+
 function ConnDatabases({
   conn,
   openDbs,
   toggleDb,
-  openTable,
-  openDesigner,
-  openQuery,
-  setIoTable,
-  dropTable,
+  dispatch,
 }: {
   conn: ConnectionDto
   openDbs: Set<string>
   toggleDb: (key: string) => void
-  openTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
-  openDesigner: (conn: ConnectionDto, db: string, schema: string, table?: string) => void
-  openQuery: (conn: ConnectionDto, db: string, schema: string) => void
-  setIoTable: (v: { conn: string; db: string; schema: string; table: string }) => void
-  dropTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
+  dispatch: (action: MenuAction, target: MenuTarget) => void
 }) {
   const dbs = useQuery({
     queryKey: ["databases", conn.id],
@@ -373,11 +514,10 @@ function ConnDatabases({
                 </button>
               </ContextMenuTrigger>
               <ContextMenuContent>
-                <ContextMenuItem
-                  onClick={() => openQuery(conn, db.name, defaultSchema(conn.dialect, db.name))}
-                >
-                  <TerminalSquare /> 新建查询
-                </ContextMenuItem>
+                <TreeMenuContent
+                  items={databaseMenu(conn, db.name)}
+                  onRun={(a) => dispatch(a, { conn, database: db.name })}
+                />
               </ContextMenuContent>
             </ContextMenu>
             <Collapse open={open}>
@@ -385,20 +525,14 @@ function ConnDatabases({
                 <ConnSchemas
                   conn={conn}
                   database={db.name}
-                  openTable={openTable}
-                  openDesigner={openDesigner}
-                  setIoTable={setIoTable}
-                  dropTable={dropTable}
+                  dispatch={dispatch}
                 />
               ) : (
                 <ConnTables
                   conn={conn}
                   database={db.name}
                   schema={defaultSchema(conn.dialect, db.name)}
-                  openTable={openTable}
-                  openDesigner={openDesigner}
-                  setIoTable={setIoTable}
-                  dropTable={dropTable}
+                  dispatch={dispatch}
                 />
               )}
             </Collapse>
@@ -413,17 +547,11 @@ function ConnDatabases({
 function ConnSchemas({
   conn,
   database,
-  openTable,
-  openDesigner,
-  setIoTable,
-  dropTable,
+  dispatch,
 }: {
   conn: ConnectionDto
   database: string
-  openTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
-  openDesigner: (conn: ConnectionDto, db: string, schema: string, table?: string) => void
-  setIoTable: (v: { conn: string; db: string; schema: string; table: string }) => void
-  dropTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
+  dispatch: (action: MenuAction, target: MenuTarget) => void
 }) {
   const [openSchemas, setOpenSchemas] = useState<Set<string>>(new Set())
 
@@ -457,27 +585,34 @@ function ConnSchemas({
         const open = openSchemas.has(key)
         return (
           <div key={sc.name}>
-            <button
-              className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
-              onClick={() => toggleSchema(key)}
-            >
-              <ChevronDown
-                className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
-                  open ? "rotate-180" : "-rotate-90"
-                }`}
-              />
-              <Layers className="size-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
-              <span className="truncate">{sc.name}</span>
-            </button>
+            <ContextMenu>
+              <ContextMenuTrigger asChild>
+                <button
+                  className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
+                  onClick={() => toggleSchema(key)}
+                >
+                  <ChevronDown
+                    className={`size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                      open ? "rotate-180" : "-rotate-90"
+                    }`}
+                  />
+                  <Layers className="size-3.5 shrink-0 text-violet-500 dark:text-violet-400" />
+                  <span className="truncate">{sc.name}</span>
+                </button>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <TreeMenuContent
+                  items={schemaMenu(conn, database, sc.name)}
+                  onRun={(a) => dispatch(a, { conn, database, schema: sc.name })}
+                />
+              </ContextMenuContent>
+            </ContextMenu>
             <Collapse open={open}>
               <ConnTables
                 conn={conn}
                 database={database}
                 schema={sc.name}
-                openTable={openTable}
-                openDesigner={openDesigner}
-                setIoTable={setIoTable}
-                dropTable={dropTable}
+                dispatch={dispatch}
               />
             </Collapse>
           </div>
@@ -491,18 +626,12 @@ function ConnTables({
   conn,
   database,
   schema,
-  openTable,
-  openDesigner,
-  setIoTable,
-  dropTable,
+  dispatch,
 }: {
   conn: ConnectionDto
   database: string
   schema: string
-  openTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
-  openDesigner: (conn: ConnectionDto, db: string, schema: string, table?: string) => void
-  setIoTable: (v: { conn: string; db: string; schema: string; table: string }) => void
-  dropTable: (conn: ConnectionDto, db: string, schema: string, table: string) => void
+  dispatch: (action: MenuAction, target: MenuTarget) => void
 }) {
   const tables = useQuery({
     queryKey: ["tables", conn.id, database, schema],
@@ -528,7 +657,10 @@ function ConnTables({
           <ContextMenuTrigger asChild>
             <button
               className="flex w-full items-center gap-1 rounded px-2 py-1 text-left transition-colors duration-150 hover:bg-accent/60"
-              onClick={() => !t.name.startsWith("view:") && openTable(conn, database, schema, t.name)}
+              onClick={() =>
+                !t.name.startsWith("view:") &&
+                dispatch({ type: "openTable" }, { conn, database, schema, table: t.name, kind: t.kind === "view" ? "view" : "table" })
+              }
             >
               <Table2 className={`size-3.5 shrink-0 ${t.kind === "view" ? "text-violet-500 dark:text-violet-400" : "text-amber-600 dark:text-amber-400"}`} />
               <span className="truncate">{t.name}</span>
@@ -540,27 +672,16 @@ function ConnTables({
             </button>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem onClick={() => openTable(conn, database, schema, t.name)}>
-              <Table2 /> 打开数据
-            </ContextMenuItem>
-            {t.kind === "table" && (
-              <ContextMenuItem onClick={() => openDesigner(conn, database, schema, t.name)}>
-                <Pencil /> 设计表
-              </ContextMenuItem>
-            )}
-            <ContextMenuItem
-              onClick={() => setIoTable({ conn: conn.id, db: database, schema, table: t.name })}
-            >
-              <FolderOpen /> 导入 / 导出
-            </ContextMenuItem>
-            {t.kind === "table" && (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem className="text-destructive" onClick={() => dropTable(conn, database, schema, t.name)}>
-                  <Trash2 /> 删除表
-                </ContextMenuItem>
-              </>
-            )}
+            <TreeMenuContent
+              items={relationMenu(
+                conn,
+                database,
+                schema,
+                t.name,
+                t.kind === "view" ? "view" : "table",
+              )}
+              onRun={(a) => dispatch(a, { conn, database, schema, table: t.name, kind: t.kind === "view" ? "view" : "table" })}
+            />
           </ContextMenuContent>
         </ContextMenu>
       ))}
