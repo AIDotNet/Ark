@@ -8,7 +8,7 @@ description: "Docker 镜像、docker-compose 编排、数据卷备份与升级�
 官方多架构镜像（amd64 / arm64）由 GitHub Actions 构建推送：
 
 ```bash
-docker pull hejiale010426/ark:latest
+docker pull ghcr.io/aidotnet/ark:latest
 ```
 
 镜像为**前后端合一**：多阶段构建（node 构建前端 → sdk:10 发布 → aspnet:10 运行），前端静态资源被拷入 `wwwroot` 由后端直接托管，单端口暴露。
@@ -16,7 +16,7 @@ docker pull hejiale010426/ark:latest
 文档站是**独立镜像**，与主镜像分开构建推送：
 
 ```bash
-docker pull hejiale010426/ark-docs:latest
+docker pull ghcr.io/aidotnet/ark-docs:latest
 ```
 
 多阶段构建（node:22-alpine `npm ci` → `next build` standalone → 最小运行镜像），无状态、不挂数据卷。
@@ -28,7 +28,7 @@ docker pull hejiale010426/ark-docs:latest
 ```yaml
 services:
   ark:
-    image: hejiale010426/ark:latest
+    image: ghcr.io/aidotnet/ark:latest
     container_name: ark
     restart: unless-stopped
     ports:
@@ -38,7 +38,7 @@ services:
 
   # 文档站（不需要可整段删除）
   docs:
-    image: hejiale010426/ark-docs:latest
+    image: ghcr.io/aidotnet/ark-docs:latest
     container_name: ark-docs
     restart: unless-stopped
     ports:

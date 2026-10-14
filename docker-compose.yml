@@ -2,7 +2,7 @@
 # 启动: docker compose up -d    （数据持久化在命名卷 ark_data，含 ark.db 与 DataProtection 密钥）
 services:
   ark:
-    image: hejiale010426/ark:latest
+    image: ghcr.io/aidotnet/ark:latest
     container_name: ark
     restart: unless-stopped
     ports:
@@ -12,7 +12,7 @@ services:
 
   # 文档站（Next.js standalone），独立构建推送，不需要可整段删除
   docs:
-    image: hejiale010426/ark-docs:latest
+    image: ghcr.io/aidotnet/ark-docs:latest
     container_name: ark-docs
     restart: unless-stopped
     ports:
