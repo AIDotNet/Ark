@@ -247,6 +247,7 @@ public sealed class PostgreSqlProvider : ProviderBase
                 {
                     Name = name,
                     Type = TypeMapper.ToCanonical(ArkDialect.PostgreSQL, type, null, null, null),
+                    NativeType = type,
                     Nullable = !notNull,
                     DefaultValueSql = dfltExpr,
                     DefaultKind = generated.Length > 0 || isAuto
@@ -577,6 +578,8 @@ public sealed class PostgreSqlProvider : ProviderBase
         DBNull => "\\N",
         bool b => b ? "t" : "f",
         byte[] bytes => "\\x" + Convert.ToHexString(bytes).ToLowerInvariant(),
+        // 数组：PG 数组文本 {1,2,3}（元素级转义由 PgArrayText 完成），再走整体 COPY 转义
+        Array a => EscapeText(PgArrayText.FromObject(a)),
         DateTime dt => dt.ToString("O", CultureInfo.InvariantCulture),
         DateTimeOffset dto => dto.ToString("O", CultureInfo.InvariantCulture),
         Guid g => g.ToString("D"),

@@ -391,10 +391,15 @@ public static class TypeMapper
     // ② Canonical → 目标方言 SQL
     // ------------------------------------------------------------------
 
-    /// <summary>PostgreSQL 参数 cast 后缀（jsonb/timestamp 等不接受未知文本参数）；非生成列返回 null 表示无需。</summary>
+    /// <summary>
+    /// PostgreSQL 参数 cast 后缀（jsonb/timestamp 等不接受未知文本参数）；非生成列返回 null 表示无需。
+    /// 优先用列的原始类型名（NativeType）：数组等类型在规范模型中降级（smallint[]→Json），
+    /// 按规范类型反推会得到错误的 ::jsonb（42804）。
+    /// </summary>
     public static string? PgCastFor(CanonicalColumn col)
     {
         if (col.IsGenerated) return null;
+        if (!string.IsNullOrWhiteSpace(col.NativeType)) return col.NativeType;
         return FromCanonical(col.Type, ArkDialect.PostgreSQL).Sql;
     }
 

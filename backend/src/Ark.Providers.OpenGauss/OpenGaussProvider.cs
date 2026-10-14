@@ -255,6 +255,7 @@ public sealed class OpenGaussProvider : ProviderBase
                 {
                     Name = name,
                     Type = TypeMapper.ToCanonical(ArkDialect.OpenGauss, type, null, null, null),
+                    NativeType = type,
                     Nullable = !notNull,
                     DefaultValueSql = dfltExpr,
                     DefaultKind = generated.Length > 0 || isAuto

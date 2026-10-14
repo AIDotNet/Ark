@@ -152,4 +152,59 @@ public class TableConverterTests
         // jsonb → mysql json 无警告；数组类型的警告在元数据读取阶段产生
         Assert.True(true);
     }
+
+    [Fact]
+    public void PgBoolAndArrayDefaults_ToMySql_TranslateWithoutWarnings()
+    {
+        var source = new CanonicalTable
+        {
+            Name = "t",
+            Columns =
+            [
+                new CanonicalColumn
+                {
+                    Name = "is_enabled",
+                    Type = CanonicalType.Bool,
+                    DefaultValueSql = "true",
+                    DefaultKind = ValueExprKind.BooleanLiteral,
+                },
+                new CanonicalColumn
+                {
+                    Name = "tags",
+                    Type = CanonicalType.Of(CanonicalTypeId.Json),
+                    DefaultValueSql = "'{}'::text[]",
+                    DefaultKind = ValueExprKind.ArrayLiteral,
+                },
+            ],
+        };
+        var (converted, issues) = TableConverter.Convert(source, ArkDialect.PostgreSQL, ArkDialect.MySQL);
+
+        Assert.Equal("true", converted.Columns[0].DefaultValueSql);
+        Assert.Equal("('[]')", converted.Columns[1].DefaultValueSql);
+        Assert.DoesNotContain(issues, i => i.Message.Contains("原样复制"));
+        Assert.DoesNotContain(issues, i => i.Severity == "error");
+    }
+
+    [Fact]
+    public void PgBoolDefault_ToSqlServer_BecomesBitLiteral()
+    {
+        var source = new CanonicalTable
+        {
+            Name = "t",
+            Columns =
+            [
+                new CanonicalColumn
+                {
+                    Name = "is_deprecated",
+                    Type = CanonicalType.Bool,
+                    DefaultValueSql = "false",
+                    DefaultKind = ValueExprKind.BooleanLiteral,
+                },
+            ],
+        };
+        var (converted, issues) = TableConverter.Convert(source, ArkDialect.PostgreSQL, ArkDialect.SqlServer);
+
+        Assert.Equal("0", converted.Columns[0].DefaultValueSql);
+        Assert.DoesNotContain(issues, i => i.Message.Contains("原样复制"));
+    }
 }

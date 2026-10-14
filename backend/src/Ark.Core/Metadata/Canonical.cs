@@ -70,6 +70,9 @@ public enum ValueExprKind
 {
     None,
     Literal,          // 字符串/数字字面量，原样复制
+    BooleanLiteral,   // true/false：SQL Server/SQLite/DM8 发射 1/0，其余方言发射 true/false
+    TypedLiteral,     // 'v'::type 显式转换字面量：剥离转换，仅保留字面量本体
+    ArrayLiteral,     // 数组字面量（'{}'::text[] / ARRAY[..] / [..]）：发射为 JSON 数组（数组列已降级为 Json/文本）
     CurrentTimestamp,
     CurrentDate,
     CurrentTime,
@@ -91,6 +94,12 @@ public sealed record CanonicalColumn
     public string? Comment { get; init; }
     public bool IsGenerated { get; init; }
     public string? GeneratedExpression { get; init; }
+    /// <summary>
+    /// 方言原始类型名（如 "smallint[]"、"numeric(10,2)"，来自 format_type 等）。
+    /// PG 系写入端参数 cast 优先使用它：数组等类型在规范模型中降级（smallint[]→Json），
+    /// 按规范类型反推会得到错误的 ::jsonb（42804）。
+    /// </summary>
+    public string? NativeType { get; init; }
 }
 
 public sealed record CanonicalIndex

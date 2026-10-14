@@ -276,6 +276,7 @@ public sealed class KdbndpProvider : ProviderBase
                 {
                     Name = name,
                     Type = TypeMapper.ToCanonical(ArkDialect.KingbaseES, type, null, null, null),
+                    NativeType = type,
                     Nullable = !notNull,
                     DefaultValueSql = dfltExpr,
                     DefaultKind = generated.Length > 0 || isAuto

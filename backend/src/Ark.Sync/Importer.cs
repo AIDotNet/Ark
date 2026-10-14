@@ -126,7 +126,7 @@ public static class Importer
                         var p = cmd.CreateParameter();
                         var bare = $"p{pi++}";
                         p.ParameterName = desc.MakeParamName(bare);
-                        p.Value = CellValue.ToParam(el is null ? null : CellValue.FromJson(el.Value, col.Type), target.Dialect);
+                        p.Value = CellValue.ToParam(el is null ? null : CoerceCell(el.Value, col, target.Dialect), target.Dialect);
                         cmd.Parameters.Add(p);
                         var castFor = desc.ParamCastFor;
                         ps.Add(castFor is not null && castFor(col) is { } cast
@@ -150,6 +150,16 @@ public static class Importer
 
         return new ImportResult(table.Table, inserted, tableCreated, warnings);
     }
+
+    /// <summary>
+    /// 导入取值：PG 系数组列（NativeType 为 xxx[] / _xxx）归一为 PG 数组文本，
+    /// 与按原始类型（::smallint[]）的参数 cast 配合，正确写入数组列；其余走按规范类型的常规转换。
+    /// </summary>
+    private static object? CoerceCell(JsonElement el, CanonicalColumn col, ArkDialect dialect) =>
+        dialect is ArkDialect.PostgreSQL or ArkDialect.KingbaseES or ArkDialect.OpenGauss
+            && PgArrayText.IsArrayType(col.NativeType)
+                ? PgArrayText.FromJsonElement(el)
+                : CellValue.FromJson(el, col.Type);
 
     /// <summary>按采样值推断每列的规范类型，生成建表模型。</summary>
     private static CanonicalTable InferTable(

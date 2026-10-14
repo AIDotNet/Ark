@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Ark.Core.Metadata;
+using Ark.Core.Typing;
 using Ark.Providers.Abstractions;
 
 namespace Ark.Sync;
@@ -103,6 +104,11 @@ public static class Exporter
                     case DateTimeOffset dto: writer.WriteString(names[i], dto); break;
                     case Guid g: writer.WriteString(names[i], g); break;
                     case byte[] bytes: writer.WriteString(names[i], Convert.ToBase64String(bytes)); break;
+                    case Array arr: // PG 数组等：输出真正的 JSON 数组（配合导入端归一可回写数组列）
+                        writer.WriteStartArray(names[i]);
+                        foreach (var item in arr) WriteJsonValue(writer, item);
+                        writer.WriteEndArray();
+                        break;
                     default: writer.WriteString(names[i], v.ToString()); break;
                 }
             }
@@ -110,6 +116,32 @@ public static class Exporter
         }
         writer.WriteEndArray();
         await writer.FlushAsync(ct);
+    }
+
+    /// <summary>数组元素递归写入：null/数值/布尔按类型，其余（含嵌套数组内的 byte[]）按文本。</summary>
+    private static void WriteJsonValue(Utf8JsonWriter w, object? v)
+    {
+        switch (v)
+        {
+            case null: w.WriteNullValue(); break;
+            case bool b: w.WriteBooleanValue(b); break;
+            case byte or sbyte or short or ushort or int or uint or long or ulong:
+                w.WriteNumberValue(Convert.ToInt64(v, CultureInfo.InvariantCulture));
+                break;
+            case float or double or decimal:
+                w.WriteNumberValue(Convert.ToDecimal(v, CultureInfo.InvariantCulture));
+                break;
+            case Array inner when inner is not byte[]:
+                w.WriteStartArray();
+                foreach (var item in inner) WriteJsonValue(w, item);
+                w.WriteEndArray();
+                break;
+            case DateTime dt: w.WriteStringValue(dt); break;
+            case DateTimeOffset dto: w.WriteStringValue(dto); break;
+            case Guid g: w.WriteStringValue(g); break;
+            case byte[] bytes: w.WriteStringValue(Convert.ToBase64String(bytes)); break;
+            default: w.WriteStringValue(v.ToString()); break;
+        }
     }
 
     private static async Task ExportSqlAsync(
@@ -174,6 +206,8 @@ public static class Exporter
             float or double or decimal =>
                 Convert.ToString(Convert.ToDouble(v, CultureInfo.InvariantCulture), CultureInfo.InvariantCulture) ?? "0",
             byte[] bytes => BinaryLiteral(bytes, d.BinaryFormat),
+            // 数组字面量按字符串书写，目标列类型已知时由数据库隐式转换（'{'a,b'}' → text[]）
+            Array a => SqlString(PgArrayText.FromObject(a), d),
             DateTime dt => SqlString(dt.ToString("O", CultureInfo.InvariantCulture), d),
             DateTimeOffset dto => SqlString(dto.ToString("O", CultureInfo.InvariantCulture), d),
             Guid g => SqlString(g.ToString("D"), d),

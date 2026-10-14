@@ -5,7 +5,7 @@ namespace Ark.Core.Typing;
 
 /// <summary>
 /// 跨库“插件函数”翻译：仅作用于默认值表达式与生成列（数据本体不翻译）。
-/// 识别源方言表达式的语义（当前时间戳/UUID/COALESCE/拼接…），再按目标方言输出。
+/// 识别源方言表达式的语义（当前时间戳/UUID/COALESCE/拼接/布尔/数组与类型转换字面量…），再按目标方言输出。
 /// 无法翻译时返回原表达式并由调用方（同步计划）给出警告。
 /// </summary>
 public static partial class FunctionTranslator
@@ -111,6 +111,8 @@ public static partial class FunctionTranslator
     private static ValueExprKind ClassifyCommon(string e)
     {
         if (e.StartsWith("coalesce(")) return ValueExprKind.Coalesce;
+        if (e is "true" or "false") return ValueExprKind.BooleanLiteral;
+        if (TryClassifyCastOrArray(e, out var castKind)) return castKind;
         if (IsStringLiteral(e) || RegexNumber().IsMatch(e)) return ValueExprKind.Literal;
         return ValueExprKind.Unrecognized;
     }
@@ -120,6 +122,9 @@ public static partial class FunctionTranslator
     {
         ValueExprKind.None => null,
         ValueExprKind.Literal or ValueExprKind.Unrecognized => StripOuter(rawExpr.Trim()),
+        ValueExprKind.BooleanLiteral => EmitBoolean(target, rawExpr),
+        ValueExprKind.TypedLiteral => PgCastLiteralPart(rawExpr),
+        ValueExprKind.ArrayLiteral => ArrayLiteralFor(target, rawExpr),
         ValueExprKind.CurrentTimestamp => target switch
         {
             ArkDialect.PostgreSQL => "now()",
@@ -214,6 +219,200 @@ public static partial class FunctionTranslator
         if (sb.Length > 0) result.Add(sb.ToString().Trim());
         return result;
     }
+
+    // ------------------------------ 布尔 / 类型转换字面量 / 数组 ------------------------------
+
+    /// <summary>布尔字面量：SQL Server/SQLite/DM8 用 1/0（BIT/INTEGER 列），其余方言用 true/false。</summary>
+    private static string EmitBoolean(ArkDialect target, string raw)
+    {
+        var isTrue = StripOuter(raw.Trim()).Equals("true", StringComparison.OrdinalIgnoreCase);
+        return target is ArkDialect.SqlServer or ArkDialect.SQLite or ArkDialect.DM8
+            ? (isTrue ? "1" : "0")
+            : (isTrue ? "true" : "false");
+    }
+
+    /// <summary>剥离 '::type' 显式转换，仅保留字面量本体：目标列类型（可能已从枚举/自定义类型降级）决定实际类型。</summary>
+    private static string PgCastLiteralPart(string raw) =>
+        TrySplitPgCast(StripOuter(raw.Trim()), out var lit, out _) ? lit : StripOuter(raw.Trim());
+
+    /// <summary>
+    /// 数组字面量 → JSON 数组文本（SQL 字符串字面量形式）。规范模型中数组列一律降级为 Json/文本存储，
+    /// 因此 '{}'::text[] 在任何目标端都应落为 '["a","b"]' 这类 JSON 默认值；
+    /// 返回 null 表示表达式形态无法解析（交由调用方报错）。
+    /// </summary>
+    private static string? ArrayLiteralFor(ArkDialect target, string raw)
+    {
+        var json = ArrayToJson(StripOuter(raw.Trim()));
+        if (json is null) return null;
+        var quoted = SqlQuote(json);
+        // MySQL/MariaDB 的 json/长文本列不接受裸字面量默认值，需以表达式形式 DEFAULT ('[]') 书写
+        return target is ArkDialect.MySQL or ArkDialect.MariaDB ? $"({quoted})" : quoted;
+    }
+
+    private static string? ArrayToJson(string s)
+    {
+        string inner;
+        var pgBrace = false;
+        if (TrySplitPgCast(s, out var lit, out _))
+        {
+            var l = lit.ToLowerInvariant();
+            if (l.StartsWith("array[") && lit.EndsWith(']'))
+                inner = lit[6..^1];
+            else if (lit.Length >= 2 && lit.StartsWith('\'') && lit.EndsWith('\''))
+            {
+                var body = lit[1..^1];
+                if (body.StartsWith('{') && body.EndsWith('}')) { inner = body[1..^1]; pgBrace = true; }
+                else if (body.StartsWith('[') && body.EndsWith(']')) inner = body[1..^1];
+                else return null;
+            }
+            else if (l.StartsWith('[') && lit.EndsWith(']'))
+                inner = lit[1..^1];
+            else return null;
+        }
+        else if (s.StartsWith("array[", StringComparison.OrdinalIgnoreCase) && s.EndsWith(']'))
+            inner = s[6..^1];
+        else if (s.StartsWith('[') && s.EndsWith(']'))
+            inner = s[1..^1];
+        else return null;
+
+        var elems = pgBrace ? SplitPgBraceElems(inner) : SplitTopLevelArgs(inner);
+        return "[" + string.Join(",", elems.Select(e => ArrayElemToJson(e, pgBrace))) + "]";
+    }
+
+    /// <summary>识别带显式类型转换的字面量与数组字面量：'v'::type / 42::int / true::bool / '{}'::text[] / ARRAY[..]::int[] / [..]。</summary>
+    private static bool TryClassifyCastOrArray(string e, out ValueExprKind kind)
+    {
+        kind = ValueExprKind.Unrecognized;
+        var s = StripOuter(e);
+        if (s.StartsWith('[') && s.EndsWith(']')) // 裸数组（DuckDB/ClickHouse 的列表默认值）
+        {
+            kind = ValueExprKind.ArrayLiteral;
+            return true;
+        }
+        if (!TrySplitPgCast(s, out var lit, out var type)) return false;
+        kind = IsArrayCast(lit, type) ? ValueExprKind.ArrayLiteral
+            : lit.ToLowerInvariant() is "true" or "false" ? ValueExprKind.BooleanLiteral
+            : ValueExprKind.TypedLiteral;
+        return true;
+    }
+
+    /// <summary>在字符串/括号外找最右侧的 “::” 并拆分（'v'::type → ("'v'", "type")）；左右两侧均需形态合法。</summary>
+    private static bool TrySplitPgCast(string s, out string literal, out string castType)
+    {
+        literal = castType = "";
+        var idx = -1;
+        var depth = 0;
+        var inStr = false;
+        for (var i = s.Length - 1; i >= 0; i--)
+        {
+            var ch = s[i];
+            if (inStr) { if (ch == '\'') inStr = false; continue; }
+            if (ch == ':' && depth == 0 && i > 0 && s[i - 1] == ':') { idx = i - 1; break; }
+            switch (ch)
+            {
+                case '\'': inStr = true; break;
+                case ')': depth++; break;
+                case '(': depth--; break;
+            }
+        }
+        if (idx <= 0) return false;
+        literal = s[..idx].Trim();
+        castType = s[(idx + 2)..].Trim();
+        return literal.Length > 0 && castType.Length > 0
+            && IsLiteralPart(literal) && LooksLikeTypeName(castType);
+    }
+
+    /// <summary>“::” 左侧是否为可迁移的字面量本体：字符串 / 数字 / 布尔 / 数组。</summary>
+    private static bool IsLiteralPart(string lit)
+    {
+        if (IsStringLiteral(lit) || RegexNumber().IsMatch(lit)) return true;
+        var l = lit.ToLowerInvariant();
+        return l is "true" or "false"
+            || (l.StartsWith("array[") && lit.EndsWith(']'))
+            || (lit.StartsWith('[') && lit.EndsWith(']'));
+    }
+
+    /// <summary>“::” 右侧是否像类型名（排除函数调用等表达式尾巴）：字母数字、括号、方括号、点、逗号与空白。</summary>
+    private static bool LooksLikeTypeName(string t) =>
+        t.Length > 0 && t.All(c => char.IsLetterOrDigit(c) || char.IsWhiteSpace(c)
+            || c is '_' or '[' or ']' or '(' or ')' or ',' or '.');
+
+    private static bool IsArrayCast(string lit, string type)
+    {
+        if (type.EndsWith("[]") || type.StartsWith('_')) return true;
+        var l = lit.ToLowerInvariant();
+        return l.StartsWith("array[") || (lit.StartsWith('[') && lit.EndsWith(']'));
+    }
+
+    /// <summary>切分 PG 数组大括号（“{”…“}”之间）内的元素：双引号内支持 "" 转义与逗号。</summary>
+    private static List<string> SplitPgBraceElems(string inner)
+    {
+        var result = new List<string>();
+        var inQ = false;
+        var sb = new StringBuilder();
+        for (var i = 0; i < inner.Length; i++)
+        {
+            var ch = inner[i];
+            if (inQ)
+            {
+                sb.Append(ch);
+                if (ch == '"')
+                {
+                    if (i + 1 < inner.Length && inner[i + 1] == '"') { sb.Append('"'); i++; }
+                    else inQ = false;
+                }
+                continue;
+            }
+            switch (ch)
+            {
+                case '"': inQ = true; sb.Append(ch); break;
+                case ',': result.Add(sb.ToString().Trim()); sb.Clear(); break;
+                default: sb.Append(ch); break;
+            }
+        }
+        if (sb.Length > 0) result.Add(sb.ToString().Trim());
+        return result;
+    }
+
+    /// <summary>单个数组元素 → JSON 值文本。pgBrace：PG '{}' 格式（元素用双引号）；否则 SQL 表达式格式（元素用单引号）。</summary>
+    private static string ArrayElemToJson(string elem, bool pgBrace)
+    {
+        var e = elem.Trim();
+        if (pgBrace)
+        {
+            if (e.Length >= 2 && e.StartsWith('"') && e.EndsWith('"'))
+                return JsonQuote(UnescapePgElem(e[1..^1]));
+            var l = e.ToLowerInvariant();
+            if (l is "null") return "null";
+            if (l is "true" or "t") return "true";
+            if (l is "false" or "f") return "false";
+            return RegexNumber().IsMatch(e) ? e : JsonQuote(e);
+        }
+        if (e.Equals("null", StringComparison.OrdinalIgnoreCase)) return "null";
+        if (e.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+            e.Equals("false", StringComparison.OrdinalIgnoreCase))
+            return e.ToLowerInvariant();
+        if (e.Length >= 2 && e.StartsWith('\'') && e.EndsWith('\''))
+            return JsonQuote(e[1..^1].Replace("''", "'"));
+        return RegexNumber().IsMatch(e) ? e : JsonQuote(e);
+    }
+
+    private static string UnescapePgElem(string s)
+    {
+        var sb = new StringBuilder(s.Length);
+        for (var i = 0; i < s.Length; i++)
+        {
+            if (s[i] == '\\' && i + 1 < s.Length) { sb.Append(s[++i]); continue; }
+            sb.Append(s[i]);
+        }
+        return sb.ToString();
+    }
+
+    private static string JsonQuote(string s) => "\"" +
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+         .Replace("\n", "\\n").Replace("\r", "\\r").Replace("\t", "\\t") + "\"";
+
+    private static string SqlQuote(string s) => "'" + s.Replace("'", "''") + "'";
 
     // ------------------------------ 工具 ------------------------------
 
