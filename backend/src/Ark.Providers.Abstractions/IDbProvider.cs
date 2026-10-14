@@ -26,6 +26,22 @@ public interface IDbProvider : IAsyncDisposable
     Task<IReadOnlyList<ExtensionDependency>> CheckFunctionsAsync(
         string database, IReadOnlyList<string> functions, CancellationToken ct = default);
 
+    /// <summary>列出数据库已安装的扩展/插件（无扩展概念的方言返回空列表）。</summary>
+    Task<IReadOnlyList<string>> ListExtensionsAsync(string database, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    /// <summary>检查目标库对一批扩展的可用性：已安装（Present） / 可安装（带 InstallSql） / 不可用（空 InstallSql）。</summary>
+    Task<IReadOnlyList<ExtensionDependency>> CheckExtensionsAsync(
+        string database, IReadOnlyList<string> extensions, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ExtensionDependency>>(
+            extensions.Select(e => new ExtensionDependency
+            {
+                Name = e,
+                InstallSql = "",
+                Present = false,
+                Note = $"方言 {Dialect} 不支持扩展",
+            }).ToArray());
+
     /// <summary>视图定义原文（pg_get_viewdef / SHOW CREATE VIEW / sqlite_master.sql）。不存在返回 null。</summary>
     Task<string?> GetViewDefinitionAsync(string database, string? schema, string view, CancellationToken ct = default);
 

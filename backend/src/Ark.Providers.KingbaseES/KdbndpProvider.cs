@@ -595,6 +595,47 @@ public sealed class KdbndpProvider : ProviderBase
         }
     }
 
+    /// <summary>已安装扩展清单（pg_extension）。</summary>
+    public async Task<IReadOnlyList<string>> ListExtensionsAsync(string database, CancellationToken ct = default)
+    {
+        var conn = await GetConnAsync(database, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT extname FROM pg_extension ORDER BY 1";
+        var list = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) list.Add(r.GetString(0));
+        return list;
+    }
+
+    /// <summary>批量检查扩展可用性：已安装 / 可安装（CREATE EXTENSION IF NOT EXISTS）/ 不可用。</summary>
+    public async Task<IReadOnlyList<ExtensionDependency>> CheckExtensionsAsync(
+        string database, IReadOnlyList<string> extensions, CancellationToken ct = default)
+    {
+        var names = extensions.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (names.Length == 0) return [];
+        var conn = await GetConnAsync(database, ct);
+        var installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT extname FROM pg_extension";
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) installed.Add(r.GetString(0));
+        }
+        var available = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT name FROM pg_available_extensions";
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) available.Add(r.GetString(0));
+        }
+        return names.Select(n => installed.Contains(n)
+            ? new ExtensionDependency { Name = n, InstallSql = "", Present = true }
+            : available.Contains(n)
+                ? new ExtensionDependency { Name = n, InstallSql = $"CREATE EXTENSION IF NOT EXISTS \"{n}\";", Present = false }
+                : new ExtensionDependency { Name = n, InstallSql = "", Present = false, Note = "目标端无此扩展可用" }
+        ).ToList();
+    }
+
     public override async Task<IReadOnlyList<ExtensionDependency>> CheckFunctionsAsync(
         string database, IReadOnlyList<string> functions, CancellationToken ct = default)
     {

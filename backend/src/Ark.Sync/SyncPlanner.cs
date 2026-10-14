@@ -24,6 +24,8 @@ public sealed class SyncPlanner
         var plans = new List<TableExecution>();
         // 表间外键依赖（用于建表拓扑排序：被引用的表先建）
         var tableDeps = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        // 已发射过安装动作的扩展（跨表去重：CREATE EXTENSION IF NOT EXISTS 幂等，但计划里不应重复出现）
+        var extensionInstalls = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var sel in req.Tables)
         {
@@ -265,6 +267,9 @@ public sealed class SyncPlanner
                 else actions.Add(reset);
             }
 
+            // 缺失的扩展依赖 → 置顶安装动作：先于 SetSearchPath/建表 DDL 执行
+            PrependExtensionActions(actions, extensions, sel.Table, extensionInstalls);
+
             plans.Add(new TableExecution
             {
                 Source = sel,
@@ -321,6 +326,35 @@ public sealed class SyncPlanner
             .Select(x => x.p)
             .ToList();
         plans = SortByDependencies(plans, tableDeps);
+
+        // 全量扩展清单同步（req.SyncExtensions）：源库已安装的扩展在目标端缺失 → 安装动作挂在首个表。
+        // 放在拓扑排序之后：首个表必然最先执行，保证扩展先于一切表 DDL 安装。
+        if (req.SyncExtensions && plans.Count > 0 && SupportsExtensionInventorySync(source.Dialect, target.Dialect))
+        {
+            var srcExts = await source.ListExtensionsAsync(req.SourceDatabase, ct);
+            var deps = srcExts.Count > 0
+                ? await target.CheckExtensionsAsync(req.TargetDatabase, srcExts, ct)
+                : [];
+            var installs = deps.Where(e => !e.Present && !string.IsNullOrWhiteSpace(e.InstallSql)).ToList();
+            var unavailable = deps.Where(e => !e.Present && string.IsNullOrWhiteSpace(e.InstallSql)).ToList();
+            if (installs.Count > 0 || unavailable.Count > 0)
+            {
+                var head = plans[0];
+                var headActions = head.StructureActions.ToList();
+                headActions.InsertRange(0, installs.Select(ext => new DdlAction
+                {
+                    Id = ActionId(head.Target.Table, "InstallExtension", ext.InstallSql),
+                    Kind = "InstallExtension",
+                    Summary = $"同步源库扩展 {ext.Name}",
+                    Sql = ext.InstallSql,
+                }));
+                var headIssues = head.ConversionIssues.ToList();
+                foreach (var ext in unavailable)
+                    headIssues.Add(new ConversionIssue("warning",
+                        $"源库扩展 {ext.Name} 在目标端不可用，无法同步（若表 DDL 依赖其函数将失败）"));
+                plans[0] = head with { StructureActions = DedupIds(headActions), ConversionIssues = headIssues };
+            }
+        }
 
         return new ExecutionPlan
         {
@@ -574,6 +608,35 @@ public sealed class SyncPlanner
 
     private static string ActionId(string table, string kind, string sql) =>
         $"{table}:{kind}:{sql}";
+
+    /// <summary>扩展清单同步仅在 PG 系方言间支持（pg_extension / pg_available_extensions 目录；扩展不跨家族通用）。</summary>
+    public static bool SupportsExtensionInventorySync(ArkDialect source, ArkDialect target) =>
+        source is ArkDialect.PostgreSQL or ArkDialect.KingbaseES or ArkDialect.OpenGauss
+        && target is ArkDialect.PostgreSQL or ArkDialect.KingbaseES or ArkDialect.OpenGauss;
+
+    /// <summary>
+    /// 缺失的扩展依赖 → 置顶 InstallExtension 动作（此前计划仅展示依赖、执行器从不安装，目标端建表会因函数缺失失败）。
+    /// 必须先于建表 DDL：PG 在 CREATE TABLE 时即解析默认值函数（如 gen_random_uuid）。
+    /// InstallSql 为空的（目标端无该扩展可用）不发射，保留为计划中的缺依赖提示由人工处理；
+    /// 同一扩展跨表只发射一次（emitted 由调用方跨表共享）。
+    /// </summary>
+    public static void PrependExtensionActions(
+        List<DdlAction> actions, IReadOnlyList<ExtensionDependency> extensions, string table, HashSet<string> emitted)
+    {
+        foreach (var ext in extensions)
+        {
+            if (ext.Present || string.IsNullOrWhiteSpace(ext.InstallSql)) continue;
+            if (!emitted.Add(ext.InstallSql)) continue;
+            actions.Insert(0, new DdlAction
+            {
+                Id = ActionId(table, "InstallExtension", ext.InstallSql),
+                Kind = "InstallExtension",
+                Summary = $"安装扩展 {ext.Name}（默认值函数依赖）",
+                Sql = ext.InstallSql,
+                Warnings = ext.Note is null ? [] : [ext.Note],
+            });
+        }
+    }
 
     /// <summary>按外键依赖拓扑排序（Kahn，稳定）：被引用的表排在前面；存在循环依赖时保持原序。</summary>
     private static List<TableExecution> SortByDependencies(List<TableExecution> plans, Dictionary<string, HashSet<string>> deps)

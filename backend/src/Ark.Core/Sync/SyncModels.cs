@@ -95,6 +95,8 @@ public sealed record SyncPlanRequest
     [Range(50, 100_000)] public int ChunkRows { get; init; } = 2000;
     /// <summary>大表导入：二级索引/外键延后到数据复制完成后创建。</summary>
     public bool DeferIndexes { get; init; }
+    /// <summary>同步源库已安装的扩展/插件清单到目标端（仅 PG 系方言间支持；缺失的生成 CREATE EXTENSION 安装动作）。</summary>
+    public bool SyncExtensions { get; init; }
     public VerifyMode VerifyMode { get; init; } = VerifyMode.Sample;
     /// <summary>表级并行度（拓扑分层内并行）。</summary>
     [Range(1, 8)] public int MaxParallelTables { get; init; } = 2;
